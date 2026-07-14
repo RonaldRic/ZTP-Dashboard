@@ -1,0 +1,815 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Monitoring opóźnień tramwajów - Kraków</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-border: #262b36;
+    --text: #e6e8ec;
+    --text-dim: #8b93a3;
+    --accent: #4da3ff;
+    --ok: #3ecf8e;
+    --warn: #f0b429;
+    --bad: #f2545b;
+    --neutral: #6b7280;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--panel-border);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  .api-config { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--text-dim); }
+  .api-config input {
+    background: var(--panel); border: 1px solid var(--panel-border); color: var(--text);
+    padding: 6px 10px; border-radius: 6px; width: 260px; font-size: 13px;
+  }
+  .api-config button {
+    background: var(--accent); color: #06121f; border: none; padding: 6px 12px;
+    border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  .tabs { display: flex; gap: 4px; padding: 12px 20px 0 20px; }
+  .tab-btn {
+    background: transparent; border: none; color: var(--text-dim); padding: 10px 16px;
+    font-size: 14px; font-weight: 600; cursor: pointer; border-bottom: 2px solid transparent;
+  }
+  .tab-btn.active { color: var(--text); border-bottom: 2px solid var(--accent); }
+  .tab-btn:hover { color: var(--text); }
+  .summary-row { display: flex; gap: 12px; padding: 16px 20px; flex-wrap: wrap; }
+  .summary-card {
+    background: var(--panel); border: 1px solid var(--panel-border); border-radius: 10px;
+    padding: 12px 16px; min-width: 150px; flex: 1;
+  }
+  .summary-card .label { font-size: 12px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; }
+  .summary-card .value { font-size: 22px; font-weight: 700; margin-top: 4px; }
+  .summary-card .sub { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+  .controls { padding: 0 20px 12px 20px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  select, input[type="text"] {
+    background: var(--panel); border: 1px solid var(--panel-border); color: var(--text);
+    padding: 7px 10px; border-radius: 6px; font-size: 13px;
+  }
+  .table-wrap { padding: 0 20px 20px 20px; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: 10px; overflow: hidden; font-size: 13px; table-layout: fixed; }
+  th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--panel-border); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  th { color: var(--text-dim); font-weight: 600; cursor: pointer; user-select: none; position: sticky; top: 0; background: var(--panel); }
+  th:hover { color: var(--text); }
+  th .arrow { font-size: 10px; margin-left: 4px; opacity: 0.6; }
+  tr.data-row { cursor: pointer; }
+  tr.data-row:hover td { background: #1c2029; }
+  tr.data-row.expanded td { background: #1c2029; }
+  .col-narrow { width: 68px; }
+  .col-medium { width: 90px; }
+  .col-wide { width: auto; min-width: 160px; white-space: normal; }
+  .status-pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .status-pelny { background: rgba(62,207,142,0.15); color: var(--ok); }
+  .status-czesciowy_zawrocony { background: rgba(240,180,41,0.15); color: var(--warn); }
+  .status-czesciowy_brak_danych { background: rgba(242,84,91,0.15); color: var(--bad); }
+  .status-odwolany { background: rgba(107,114,128,0.15); color: var(--neutral); }
+  .delay-bad { color: var(--bad); font-weight: 600; }
+  .delay-warn { color: var(--warn); font-weight: 600; }
+  .delay-ok { color: var(--ok); font-weight: 600; }
+  .delay-none { color: var(--text-dim); }
+  .relation-text { color: var(--text-dim); font-size: 12px; white-space: normal; }
+  .pagination { display: flex; gap: 8px; align-items: center; padding: 12px 20px; font-size: 13px; color: var(--text-dim); }
+  .pagination button {
+    background: var(--panel); border: 1px solid var(--panel-border); color: var(--text);
+    padding: 5px 10px; border-radius: 6px; cursor: pointer; font-size: 13px;
+  }
+  .pagination button:disabled { opacity: 0.4; cursor: default; }
+  .empty-state, .error-state { padding: 40px 20px; text-align: center; color: var(--text-dim); }
+  .error-state { color: var(--bad); }
+  .loading { padding: 20px; text-align: center; color: var(--text-dim); }
+  .hint { color: var(--text-dim); font-size: 13px; }
+
+  /* Rozwijany wiersz z przebiegiem kursu */
+  tr.detail-row td { background: #12141a; padding: 0; cursor: default; white-space: normal; }
+  .detail-wrap { padding: 12px 16px 16px 16px; }
+  .detail-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; flex-wrap: wrap; gap: 6px; }
+  .detail-header .title { font-weight: 600; font-size: 13px; }
+  .detail-header .sub { color: var(--text-dim); font-size: 12px; }
+  .segment-table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: auto; }
+  .segment-table th, .segment-table td { padding: 6px 8px; border-bottom: 1px solid var(--panel-border); white-space: nowrap; }
+  .segment-table th { position: static; cursor: default; color: var(--text-dim); }
+  .segment-row { cursor: pointer; }
+  .segment-row:hover td { background: #1a1d25; }
+  .segment-row .toggle { display: inline-block; width: 14px; color: var(--text-dim); }
+  .ticks-row td { background: #0e1015; padding: 4px 8px 8px 28px; }
+  .ticks-table { width: 100%; border-collapse: collapse; font-size: 11.5px; color: var(--text-dim); }
+  .ticks-table td { padding: 3px 8px; border-bottom: 1px dotted #20242e; white-space: nowrap; }
+  .brigade-toggle-btn {
+    background: var(--panel); border: 1px solid var(--panel-border); color: var(--accent);
+    padding: 6px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; margin-bottom: 10px;
+  }
+  .brigade-toggle-btn:hover { border-color: var(--accent); }
+  .brigade-list-wrap { margin-bottom: 14px; border: 1px solid var(--panel-border); border-radius: 8px; overflow: hidden; }
+  .brigade-list-wrap .segment-table { font-size: 11.5px; }
+  tr.brigade-trip-row.active td { background: rgba(77,163,255,0.12); }
+  tr.pass-separator td {
+    background: #1a1408; color: var(--warn); font-weight: 600; font-size: 11.5px;
+    padding: 6px 8px; border-bottom: 1px solid var(--panel-border); white-space: normal;
+  }
+  .multipass-banner {
+    background: rgba(240,180,41,0.12); border: 1px solid rgba(240,180,41,0.35); color: var(--warn);
+    padding: 8px 12px; border-radius: 8px; font-size: 12px; margin-bottom: 10px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🚊 Monitoring opóźnień tramwajów - Kraków</h1>
+  <div class="api-config">
+    <span>Adres API:</span>
+    <input id="apiBaseInput" type="text" placeholder="https://twoj-serwis.up.railway.app" value="https://tramwaje-krakow-production.up.railway.app">
+    <button id="connectBtn">Połącz</button>
+  </div>
+</header>
+
+<div class="tabs">
+  <button class="tab-btn active" data-tab="live">Aktualne kursy</button>
+  <button class="tab-btn" data-tab="history">Historia</button>
+</div>
+
+<div id="summaryRow" class="summary-row"></div>
+
+<div class="controls">
+  <select id="statusFilter">
+    <option value="">Wszystkie statusy</option>
+    <option value="pelny">pełny</option>
+    <option value="czesciowy_zawrocony">częściowy - zawrócony</option>
+    <option value="czesciowy_brak_danych">częściowy - brak danych</option>
+    <option value="odwolany">odwołany</option>
+  </select>
+  <select id="routeFilter">
+    <option value="">Wszystkie linie</option>
+  </select>
+  <span class="hint">Kliknij nagłówek kolumny, żeby sortować · kliknij wiersz, żeby zobaczyć przebieg kursu</span>
+</div>
+
+<div class="table-wrap">
+  <div id="tableContainer"><div class="loading">Podaj adres API i kliknij "Połącz"...</div></div>
+</div>
+
+<div id="paginationRow" class="pagination" style="display:none;">
+  <button id="prevBtn">← Poprzednie</button>
+  <span id="pageInfo"></span>
+  <button id="nextBtn">Następne →</button>
+</div>
+
+<script>
+const STATUS_LABELS = {
+  pelny: "pełny",
+  czesciowy_zawrocony: "częściowy - zawrócony",
+  czesciowy_brak_danych: "częściowy - brak danych",
+  odwolany: "odwołany",
+};
+
+// Kolejność i szerokości dopasowane do tego, co faktycznie trzeba widziec
+// od razu (brygada/linia/pojazd/kurs/relacja) vs. co jest drugorzedne
+// (numery, godziny) - stąd col-narrow dla liczb/godzin i col-wide tylko
+// dla tekstu zmiennej długości (Relacja, Nazwa przystanku).
+const HISTORY_COLUMNS = [
+  { key: "block_id", label: "Brygada", cls: "col-narrow" },
+  { key: "route_id", label: "Linia", cls: "col-narrow" },
+  { key: "vehicle_id", label: "Pojazd", cls: "col-narrow" },
+  { key: "trip_id", label: "Kurs", cls: "col-narrow" },
+  { key: "relation", label: "Relacja", cls: "col-wide" },
+  { key: "status", label: "Status", cls: "col-medium" },
+  { key: "last_stop_sequence", label: "Nr przyst.", cls: "col-narrow" },
+  { key: "last_stop_name", label: "Nazwa przystanku", cls: "col-wide" },
+  { key: "last_delay_seconds", label: "Ostatnie opóźnienie", cls: "col-medium" },
+  { key: "avg_delay_seconds", label: "Śr. opóźnienie", cls: "col-medium" },
+  { key: "max_delay_seconds", label: "Maks. opóźnienie", cls: "col-medium" },
+  { key: "last_seen_at", label: "Zamknięty o", cls: "col-medium" },
+];
+
+const LIVE_COLUMNS = [
+  { key: "block_id", label: "Brygada", cls: "col-narrow" },
+  { key: "route_id", label: "Linia", cls: "col-narrow" },
+  { key: "vehicle_id", label: "Pojazd", cls: "col-narrow" },
+  { key: "trip_id", label: "Kurs", cls: "col-narrow" },
+  { key: "relation", label: "Relacja", cls: "col-wide" },
+  { key: "max_stop_sequence", label: "Nr przyst.", cls: "col-narrow" },
+  { key: "last_stop_name", label: "Nazwa przystanku", cls: "col-wide" },
+  { key: "last_delay_seconds", label: "Aktualne opóźnienie", cls: "col-medium" },
+  { key: "avg_delay_seconds", label: "Śr. opóźnienie", cls: "col-medium" },
+  { key: "max_delay_seconds", label: "Maks. opóźnienie", cls: "col-medium" },
+  { key: "last_seen_at", label: "Ostatni sygnał", cls: "col-medium" },
+];
+
+let state = {
+  apiBase: "",
+  tab: "live",
+  sort: "last_seen_at",
+  order: "desc",
+  status: "",
+  route: "",
+  limit: 50,
+  offset: 0,
+  total: 0,
+  liveRowsCache: [],
+  expandedKey: null,      // trip_id+start_date aktualnie rozwinietego wiersza
+  expandedSignals: null,  // zaladowane sygnaly dla rozwinietego wiersza
+  expandedTickKey: null,  // ktory segment (stop_sequence) ma rozwiniete surowe ticki
+  brigadeDayTrips: null,  // lista innych kursow tej samej brygady/dnia (dla otwartego wiersza)
+  activeDetailRow: null,  // aktualnie wyswietlany w panelu kurs (moze sie zmienic po kliknieciu innego kursu z listy brygady)
+};
+
+function rowKey(row) {
+  return `${row.trip_id}__${row.start_date ?? ""}`;
+}
+
+function extractNumber(idStr, prefix) {
+  if (!idStr) return "—";
+  const re = new RegExp(prefix + "_(\\d+)");
+  const m = idStr.match(re);
+  return m ? m[1] : idStr;
+}
+
+function fmtTime(unixTs) {
+  if (unixTs === null || unixTs === undefined) return "—";
+  const d = new Date(unixTs * 1000);
+  return d.toLocaleString("pl-PL", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" });
+}
+
+function fmtTimeShort(unixTs) {
+  if (unixTs === null || unixTs === undefined) return "—";
+  const d = new Date(unixTs * 1000);
+  return d.toLocaleString("pl-PL", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function delayClass(seconds) {
+  if (seconds === null || seconds === undefined) return "delay-none";
+  if (Math.abs(seconds) < 120) return "delay-ok";
+  if (Math.abs(seconds) < 360) return "delay-warn";
+  return "delay-bad";
+}
+
+function fmtDelay(seconds) {
+  if (seconds === null || seconds === undefined) return "brak danych";
+  const mins = Math.round(seconds / 60);
+  return `${seconds}s (~${mins} min)`;
+}
+
+function fmtDelayShort(seconds) {
+  if (seconds === null || seconds === undefined) return "—";
+  const mins = Math.round(seconds / 60);
+  return `${seconds}s (${mins}m)`;
+}
+
+async function apiGet(path) {
+  const url = state.apiBase.replace(/\/$/, "") + path;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`API zwróciło ${res.status}`);
+  return res.json();
+}
+
+async function loadSummary() {
+  try {
+    const data = await apiGet("/api/summary");
+    const container = document.getElementById("summaryRow");
+    container.innerHTML = "";
+    const total = data.by_status.reduce((sum, r) => sum + r.n, 0);
+    const cards = [
+      { label: "Otwarte kursy teraz", value: data.open_trips_count, sub: "" },
+      { label: "Zamknięte łącznie", value: total, sub: "" },
+    ];
+    for (const row of data.by_status) {
+      cards.push({
+        label: STATUS_LABELS[row.status] || row.status,
+        value: row.n,
+        sub: row.avg_delay !== null ? `śr. ${Math.round(row.avg_delay)}s` : "brak danych o opóźnieniu",
+      });
+    }
+    for (const c of cards) {
+      const div = document.createElement("div");
+      div.className = "summary-card";
+      div.innerHTML = `<div class="label">${c.label}</div><div class="value">${c.value}</div><div class="sub">${c.sub}</div>`;
+      container.appendChild(div);
+    }
+  } catch (e) {
+    console.error("Błąd ładowania podsumowania:", e);
+  }
+}
+
+async function loadRoutes() {
+  try {
+    const data = await apiGet("/api/routes");
+    const select = document.getElementById("routeFilter");
+    const current = select.value;
+    select.innerHTML = '<option value="">Wszystkie linie</option>';
+    for (const r of data.routes) {
+      const opt = document.createElement("option");
+      opt.value = r.route_id;
+      opt.textContent = r.route_short_name;
+      select.appendChild(opt);
+    }
+    select.value = current;
+  } catch (e) {
+    console.error("Błąd ładowania listy linii:", e);
+  }
+}
+
+function renderArrow(key) {
+  if (state.sort !== key) return "";
+  return state.order === "asc" ? '<span class="arrow">▲</span>' : '<span class="arrow">▼</span>';
+}
+
+function vehicleCell(row) {
+  const parts = [];
+  if (row.vehicle_type) parts.push(row.vehicle_type);
+  if (row.vehicle_depot) parts.push(row.vehicle_depot);
+  const title = parts.length ? parts.join(" · ") : "typ nieznany";
+  return `<td title="${title}">${row.vehicle_id ?? "—"}</td>`;
+}
+
+function renderRowCells(row, columns) {
+  let html = "";
+  for (const col of columns) {
+    if (col.key === "trip_id") {
+      html += `<td class="${col.cls}" title="${row.trip_id ?? ""}">${extractNumber(row.trip_id, "trip")}</td>`;
+    } else if (col.key === "block_id") {
+      html += `<td class="${col.cls}" title="${row.block_id ?? ""}">${row.brigade_label ?? extractNumber(row.block_id, "block")}</td>`;
+    } else if (col.key === "route_id") {
+      html += `<td class="${col.cls}">${row.route_short_name ?? row.route_id ?? "—"}</td>`;
+    } else if (col.key === "vehicle_id") {
+      html += vehicleCell(row).replace("<td", `<td class="${col.cls}"`);
+    } else if (col.key === "relation") {
+      html += `<td class="${col.cls} relation-text">${row.relation ?? "—"}</td>`;
+    } else if (col.key === "status") {
+      html += `<td class="${col.cls}"><span class="status-pill status-${row.status}">${STATUS_LABELS[row.status] || row.status}</span></td>`;
+    } else if (col.key === "avg_delay_seconds" || col.key === "max_delay_seconds" || col.key === "last_delay_seconds") {
+      html += `<td class="${col.cls} ${delayClass(row[col.key])}">${fmtDelay(row[col.key])}</td>`;
+    } else if (col.key === "last_seen_at") {
+      html += `<td class="${col.cls}">${fmtTime(row.last_seen_at)}</td>`;
+    } else if (col.key === "last_stop_name") {
+      html += `<td class="${col.cls}">${row.last_stop_name ?? "—"}</td>`;
+    } else {
+      html += `<td class="${col.cls ?? ''}">${row[col.key] ?? "—"}</td>`;
+    }
+  }
+  return html;
+}
+
+function buildSegments(signals) {
+  // Scala kolejne ~20s sygnaly na tym samym przystanku (stop_sequence) w
+  // jeden segment z zakresem czasu, zamiast pokazywac kazdy tick osobno.
+  const segments = [];
+  for (const sig of signals) {
+    const last = segments[segments.length - 1];
+    if (last && last.stop_sequence === sig.stop_sequence) {
+      last.signals.push(sig);
+      last.end = sig.recorded_at;
+      last.minDelay = Math.min(last.minDelay, sig.delay_seconds ?? last.minDelay);
+      last.maxDelay = Math.max(last.maxDelay, sig.delay_seconds ?? last.maxDelay);
+    } else {
+      segments.push({
+        stop_sequence: sig.stop_sequence,
+        stop_name: sig.stop_name,
+        vehicle_id: sig.vehicle_id,
+        start: sig.recorded_at,
+        end: sig.recorded_at,
+        minDelay: sig.delay_seconds ?? 0,
+        maxDelay: sig.delay_seconds ?? 0,
+        signals: [sig],
+      });
+    }
+  }
+  return segments;
+}
+
+function renderBrigadeListHtml() {
+  if (!state.brigadeDayTrips) {
+    return `<button type="button" class="brigade-toggle-btn" id="brigadeListBtn">Pokaż inne kursy tej brygady dziś</button>`;
+  }
+  if (!state.brigadeDayTrips.length) {
+    return `<div class="hint">Brak innych kursów tej brygady w tym dniu w historii.</div>`;
+  }
+  let html = `<div class="brigade-list-wrap"><table class="segment-table"><thead><tr>
+    <th>Kurs</th><th>Relacja</th><th>Status</th><th>Śr. opóźnienie</th><th>Zamknięty o</th>
+  </tr></thead><tbody>`;
+  for (const t of state.brigadeDayTrips) {
+    const isActive = state.activeDetailRow && t.trip_id === state.activeDetailRow.trip_id
+      && t.start_date === state.activeDetailRow.start_date;
+    html += `<tr class="segment-row brigade-trip-row${isActive ? ' active' : ''}" data-trip-id="${t.trip_id}" data-start-date="${t.start_date ?? ''}">
+      <td>${extractNumber(t.trip_id, "trip")}</td>
+      <td class="relation-text">${t.relation ?? "—"}</td>
+      <td><span class="status-pill status-${t.status}">${STATUS_LABELS[t.status] || t.status}</span></td>
+      <td class="${delayClass(t.avg_delay_seconds)}">${fmtDelayShort(t.avg_delay_seconds)}</td>
+      <td>${fmtTime(t.last_seen_at)}</td>
+    </tr>`;
+  }
+  html += "</tbody></table></div>";
+  return html;
+}
+
+function countPasses(segments) {
+  let passes = 0;
+  let maxSeq = -Infinity;
+  segments.forEach((seg, idx) => {
+    const seq = seg.stop_sequence ?? 0;
+    if (idx === 0 || seq < maxSeq - 2) {
+      passes += 1;
+      maxSeq = -Infinity;
+    }
+    maxSeq = Math.max(maxSeq, seq);
+  });
+  return passes;
+}
+
+function renderMultiPassBanner(segments) {
+  const passes = countPasses(segments);
+  if (passes <= 1) return "";
+  return `<div class="multipass-banner">⚠ Ten kurs zawiera ${passes} osobne przejazdy pod tym samym numerem — wagon prawdopodobnie zawrócił wcześniej (np. na pętli technicznej) i wznowił obsługę tej samej trasy od nowa. Zobacz podział poniżej.</div>`;
+}
+
+function renderDetailContent(row, signals) {
+  if (!signals.length) {
+    return `<div class="detail-wrap">
+      <div class="detail-header">
+        <div class="title">Przebieg kursu ${extractNumber(row.trip_id, "trip")} · linia ${row.route_short_name ?? row.route_id ?? "?"}</div>
+        <div class="sub">${row.relation ?? ""} · pojazd ${row.vehicle_id ?? "?"}</div>
+      </div>
+      <div id="brigadeListArea">${renderBrigadeListHtml()}</div>
+      <div class="empty-state">Brak zarejestrowanych sygnałów dla tego kursu.</div>
+    </div>`;
+  }
+  const segments = buildSegments(signals);
+  let html = `<div class="detail-wrap">
+    <div class="detail-header">
+      <div class="title">Przebieg kursu ${extractNumber(row.trip_id, "trip")} · linia ${row.route_short_name ?? row.route_id ?? "?"} · brygada ${row.brigade_label ?? extractNumber(row.block_id, "block")}</div>
+      <div class="sub">${row.relation ?? ""} · pojazd ${row.vehicle_id ?? "?"}${row.vehicle_type ? " (" + row.vehicle_type + ")" : ""}</div>
+    </div>
+    <div id="brigadeListArea">${renderBrigadeListHtml()}</div>
+    ${renderMultiPassBanner(segments)}
+    <table class="segment-table"><thead><tr>
+      <th></th><th>Nr</th><th>Przystanek</th><th>Od</th><th>Do</th><th>Opóźnienie</th><th>Sygnałów</th>
+    </tr></thead><tbody>`;
+  let passNumber = 0;
+  let passMaxSeq = -Infinity;
+  segments.forEach((seg, idx) => {
+    const seq = seg.stop_sequence ?? 0;
+    // Ten sam wzorzec co wykrywanie zawrocenia w trip_tracker.py: jesli
+    // stop_sequence nagle spada wzgledem dotychczasowego maksimum o wiecej
+    // niz drobny szum (2 przystanki), to nie jest kolejny przystanek tego
+    // samego przejazdu - to poczatek NOWEGO, fizycznie osobnego przejazdu
+    // pod tym samym trip_id (np. po zawroceniu na petli technicznej i
+    // wznowieniu obslugi tej samej trasy).
+    if (idx === 0 || seq < passMaxSeq - 2) {
+      passNumber += 1;
+      passMaxSeq = -Infinity;
+      const note = passNumber > 1
+        ? ' — pojazd ponownie ruszył pod tym samym numerem kursu (prawdopodobnie zawrócenie na pętli technicznej, trasa mogła nie zostać w pełni wykonana)'
+        : '';
+      html += `<tr class="pass-separator"><td colspan="7">Przejazd ${passNumber}, od ${fmtTimeShort(seg.start)}${note}</td></tr>`;
+    }
+    passMaxSeq = Math.max(passMaxSeq, seq);
+
+    const delayRange = seg.minDelay === seg.maxDelay
+      ? fmtDelayShort(seg.minDelay)
+      : `${fmtDelayShort(seg.minDelay)} – ${fmtDelayShort(seg.maxDelay)}`;
+    const isOpen = state.expandedTickKey === idx;
+    html += `<tr class="segment-row" data-seg-idx="${idx}">
+      <td><span class="toggle">${isOpen ? "▾" : "▸"}</span></td>
+      <td>${seg.stop_sequence ?? "—"}</td>
+      <td>${seg.stop_name ?? "—"}</td>
+      <td>${fmtTimeShort(seg.start)}</td>
+      <td>${fmtTimeShort(seg.end)}</td>
+      <td class="${delayClass(seg.maxDelay)}">${delayRange}</td>
+      <td>${seg.signals.length}</td>
+    </tr>`;
+    if (isOpen) {
+      html += `<tr class="ticks-row"><td colspan="7"><table class="ticks-table">`;
+      for (const s of seg.signals) {
+        html += `<tr><td>${fmtTimeShort(s.recorded_at)}</td><td class="${delayClass(s.delay_seconds)}">${fmtDelay(s.delay_seconds)}</td></tr>`;
+      }
+      html += `</table></td></tr>`;
+    }
+  });
+  html += "</tbody></table></div>";
+  return html;
+}
+
+async function loadBrigadeDayTrips(row) {
+  if (!row.block_id || !row.start_date) {
+    state.brigadeDayTrips = [];
+    return;
+  }
+  try {
+    const params = new URLSearchParams({
+      block_id: row.block_id,
+      start_date: row.start_date,
+      sort: "first_seen_at",
+      order: "asc",
+      limit: 100,
+    });
+    const data = await apiGet(`/api/trip_history?${params.toString()}`);
+    state.brigadeDayTrips = data.rows;
+  } catch (e) {
+    state.brigadeDayTrips = [];
+    console.error("Błąd ładowania kursów brygady:", e);
+  }
+}
+
+async function loadTripIntoDetail(row, td) {
+  state.activeDetailRow = row;
+  state.expandedTickKey = null;
+  td.innerHTML = '<div class="loading">Ładowanie przebiegu kursu...</div>';
+  try {
+    const params = new URLSearchParams({ trip_id: row.trip_id });
+    if (row.start_date) params.set("start_date", row.start_date);
+    const data = await apiGet(`/api/trip_detail?${params.toString()}`);
+    state.expandedSignals = data.signals;
+    td.innerHTML = renderDetailContent(row, data.signals);
+    attachDetailHandlers(td, row);
+  } catch (e) {
+    td.innerHTML = `<div class="error-state">Nie udało się pobrać przebiegu kursu: ${e.message}</div>`;
+  }
+}
+
+function attachDetailHandlers(detailTd, row) {
+  detailTd.querySelectorAll("tr.segment-row[data-seg-idx]").forEach((tr) => {
+    tr.addEventListener("click", () => {
+      const idx = parseInt(tr.dataset.segIdx, 10);
+      state.expandedTickKey = state.expandedTickKey === idx ? null : idx;
+      detailTd.innerHTML = renderDetailContent(row, state.expandedSignals);
+      attachDetailHandlers(detailTd, row);
+    });
+  });
+  const btn = detailTd.querySelector("#brigadeListBtn");
+  if (btn) {
+    btn.addEventListener("click", async () => {
+      btn.textContent = "Ładowanie...";
+      await loadBrigadeDayTrips(row);
+      detailTd.innerHTML = renderDetailContent(row, state.expandedSignals);
+      attachDetailHandlers(detailTd, row);
+    });
+  }
+  detailTd.querySelectorAll("tr.brigade-trip-row").forEach((tr) => {
+    tr.addEventListener("click", () => {
+      const newRow = {
+        trip_id: tr.dataset.tripId,
+        start_date: tr.dataset.startDate || null,
+        block_id: row.block_id,
+        brigade_label: row.brigade_label,
+        route_id: row.route_id,
+        route_short_name: row.route_short_name,
+        vehicle_id: row.vehicle_id,
+        vehicle_type: row.vehicle_type,
+        relation: state.brigadeDayTrips.find((t) => t.trip_id === tr.dataset.tripId)?.relation ?? row.relation,
+      };
+      loadTripIntoDetail(newRow, detailTd);
+    });
+  });
+}
+
+async function toggleTripDetail(row, columnCount) {
+  const key = rowKey(row);
+  const existing = document.querySelector(`tr.detail-row[data-for="${CSS.escape(key)}"]`);
+  const trigger = document.querySelector(`tr.data-row[data-key="${CSS.escape(key)}"]`);
+
+  if (state.expandedKey === key) {
+    // schowaj
+    state.expandedKey = null;
+    state.expandedSignals = null;
+    state.expandedTickKey = null;
+    state.brigadeDayTrips = null;
+    state.activeDetailRow = null;
+    if (existing) existing.remove();
+    if (trigger) trigger.classList.remove("expanded");
+    return;
+  }
+
+  // zamknij poprzednio otwarty
+  document.querySelectorAll("tr.detail-row").forEach((el) => el.remove());
+  document.querySelectorAll("tr.data-row.expanded").forEach((el) => el.classList.remove("expanded"));
+
+  state.expandedKey = key;
+  state.expandedSignals = null;
+  state.expandedTickKey = null;
+  state.brigadeDayTrips = null;
+  if (trigger) trigger.classList.add("expanded");
+
+  const detailTr = document.createElement("tr");
+  detailTr.className = "detail-row";
+  detailTr.dataset.for = key;
+  const td = document.createElement("td");
+  td.colSpan = columnCount;
+  detailTr.appendChild(td);
+  trigger.after(detailTr);
+
+  await loadTripIntoDetail(row, td);
+}
+
+function renderTable(rows, columns) {
+  const container = document.getElementById("tableContainer");
+  if (!rows.length) {
+    container.innerHTML = '<div class="empty-state">Brak kursów spełniających kryteria.</div>';
+    return;
+  }
+  state.expandedKey = null;
+  state.expandedSignals = null;
+  state.expandedTickKey = null;
+  state.brigadeDayTrips = null;
+  state.activeDetailRow = null;
+
+  let html = "<table><thead><tr>";
+  for (const col of columns) {
+    html += `<th class="${col.cls ?? ''}" data-key="${col.key}">${col.label}${renderArrow(col.key)}</th>`;
+  }
+  html += "</tr></thead><tbody>";
+  rows.forEach((row, idx) => {
+    html += `<tr class="data-row" data-idx="${idx}" data-key="${rowKey(row)}">`;
+    html += renderRowCells(row, columns);
+    html += "</tr>";
+  });
+  html += "</tbody></table>";
+  container.innerHTML = html;
+
+  const columnCount = columns.length;
+
+  container.querySelectorAll("th").forEach((th) => {
+    th.addEventListener("click", () => {
+      const key = th.dataset.key;
+      if (state.sort === key) {
+        state.order = state.order === "asc" ? "desc" : "asc";
+      } else {
+        state.sort = key;
+        state.order = "desc";
+      }
+      state.offset = 0;
+      if (state.tab === "history") {
+        loadHistoryTable();
+      } else {
+        sortAndRenderLive();
+      }
+    });
+  });
+
+  container.querySelectorAll("tr.data-row").forEach((tr) => {
+    tr.addEventListener("click", () => {
+      const idx = parseInt(tr.dataset.idx, 10);
+      const row = rows[idx];
+      toggleTripDetail(row, columnCount);
+    });
+  });
+}
+
+async function loadHistoryTable() {
+  const container = document.getElementById("tableContainer");
+  container.innerHTML = '<div class="loading">Ładowanie...</div>';
+  try {
+    const params = new URLSearchParams({
+      sort: state.sort,
+      order: state.order,
+      limit: state.limit,
+      offset: state.offset,
+    });
+    if (state.status) params.set("status", state.status);
+    if (state.route) params.set("route_id", state.route);
+
+    const data = await apiGet(`/api/trip_history?${params.toString()}`);
+    state.total = data.total;
+    renderTable(data.rows, HISTORY_COLUMNS);
+
+    const pag = document.getElementById("paginationRow");
+    pag.style.display = "flex";
+    const from = state.total === 0 ? 0 : state.offset + 1;
+    const to = Math.min(state.offset + state.limit, state.total);
+    document.getElementById("pageInfo").textContent = `${from}-${to} z ${state.total}`;
+    document.getElementById("prevBtn").disabled = state.offset === 0;
+    document.getElementById("nextBtn").disabled = state.offset + state.limit >= state.total;
+  } catch (e) {
+    container.innerHTML = `<div class="error-state">Nie udało się pobrać danych: ${e.message}<br>Sprawdź, czy adres API jest poprawny i czy serwis jest publicznie dostępny (Networking → Generate Domain w Railway).</div>`;
+  }
+}
+
+function getSortValue(row, key) {
+  // "Linia" widoczna na ekranie to route_short_name (np. "62"), a nie
+  // surowe row.route_id (np. "route_63") - sortowanie po surowym route_id
+  // dawalo kolejnosc niezwiazana z tym, co bylo widac w kolumnie. Rzutujemy
+  // dodatkowo na liczbe, zeby "9" nie wypadalo alfabetycznie po "74".
+  if (key === "route_id") {
+    const v = row.route_short_name ?? row.route_id;
+    const n = Number(v);
+    return Number.isNaN(n) ? v : n;
+  }
+  return row[key];
+}
+
+function sortAndRenderLive() {
+  let rows = [...state.liveRowsCache];
+  if (state.route) rows = rows.filter((r) => r.route_id === state.route);
+  rows.sort((a, b) => {
+    const av = getSortValue(a, state.sort);
+    const bv = getSortValue(b, state.sort);
+    if (av === null || av === undefined) return 1;
+    if (bv === null || bv === undefined) return -1;
+    if (av < bv) return state.order === "asc" ? -1 : 1;
+    if (av > bv) return state.order === "asc" ? 1 : -1;
+    return 0;
+  });
+  renderTable(rows, LIVE_COLUMNS);
+  document.getElementById("paginationRow").style.display = "none";
+}
+
+async function loadLiveTable() {
+  const container = document.getElementById("tableContainer");
+  container.innerHTML = '<div class="loading">Ładowanie...</div>';
+  try {
+    const data = await apiGet("/api/open_trips");
+    state.liveRowsCache = data.rows;
+    sortAndRenderLive();
+  } catch (e) {
+    container.innerHTML = `<div class="error-state">Nie udało się pobrać danych: ${e.message}</div>`;
+  }
+}
+
+async function loadTable() {
+  if (state.tab === "history") {
+    document.getElementById("statusFilter").style.display = "";
+    await loadHistoryTable();
+  } else {
+    document.getElementById("statusFilter").style.display = "none";
+    document.getElementById("paginationRow").style.display = "none";
+    await loadLiveTable();
+  }
+}
+
+async function refreshAll() {
+  await Promise.all([loadSummary(), loadRoutes()]);
+  await loadTable();
+}
+
+document.getElementById("connectBtn").addEventListener("click", () => {
+  const val = document.getElementById("apiBaseInput").value.trim();
+  if (!val) return;
+  state.apiBase = val;
+  refreshAll();
+});
+
+document.querySelectorAll(".tab-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    state.tab = btn.dataset.tab;
+    state.offset = 0;
+    if (state.apiBase) loadTable();
+  });
+});
+
+document.getElementById("statusFilter").addEventListener("change", (e) => {
+  state.status = e.target.value;
+  state.offset = 0;
+  loadTable();
+});
+
+document.getElementById("routeFilter").addEventListener("change", (e) => {
+  state.route = e.target.value;
+  state.offset = 0;
+  loadTable();
+});
+
+document.getElementById("prevBtn").addEventListener("click", () => {
+  state.offset = Math.max(0, state.offset - state.limit);
+  loadHistoryTable();
+});
+
+document.getElementById("nextBtn").addEventListener("click", () => {
+  state.offset += state.limit;
+  loadHistoryTable();
+});
+
+// Odswiezanie co 30s, jesli juz polaczono - ale NIE gdy ktos aktualnie
+// przeglada rozwiniety podglad kursu (inaczej co 30s znikalby spod rak).
+setInterval(() => {
+  if (state.apiBase && !state.expandedKey) refreshAll();
+}, 30000);
+
+window.addEventListener("DOMContentLoaded", () => {
+  document.getElementById("statusFilter").style.display = "none";
+  const defaultUrl = document.getElementById("apiBaseInput").value.trim();
+  if (defaultUrl) {
+    state.apiBase = defaultUrl;
+    refreshAll();
+  }
+});
+</script>
+
+</body>
+</html>
