@@ -66,7 +66,7 @@
   .table-wrap { padding: 0 20px 20px 20px; overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: 10px; overflow: hidden; font-size: 13px; table-layout: fixed; }
   th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--panel-border); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  th { color: var(--text-dim); font-weight: 600; cursor: pointer; user-select: none; position: sticky; top: 0; background: var(--panel); }
+  th { color: var(--text-dim); font-weight: 600; cursor: pointer; user-select: none; position: sticky; top: 0; background: var(--panel); white-space: normal; line-height: 1.25; vertical-align: bottom; }
   th:hover { color: var(--text); }
   th .arrow { font-size: 10px; margin-left: 4px; opacity: 0.6; }
   tr.data-row { cursor: pointer; }
@@ -188,6 +188,8 @@ const HISTORY_COLUMNS = [
   { key: "route_id", label: "Linia", cls: "col-narrow" },
   { key: "vehicle_id", label: "Pojazd", cls: "col-narrow" },
   { key: "trip_id", label: "Kurs", cls: "col-narrow" },
+  { key: "scheduled_start_seconds", label: "Rozkład: start", cls: "col-narrow" },
+  { key: "scheduled_end_seconds", label: "Rozkład: koniec", cls: "col-narrow" },
   { key: "relation", label: "Relacja", cls: "col-wide" },
   { key: "status", label: "Status", cls: "col-medium" },
   { key: "last_stop_sequence", label: "Nr przyst.", cls: "col-narrow" },
@@ -203,6 +205,8 @@ const LIVE_COLUMNS = [
   { key: "route_id", label: "Linia", cls: "col-narrow" },
   { key: "vehicle_id", label: "Pojazd", cls: "col-narrow" },
   { key: "trip_id", label: "Kurs", cls: "col-narrow" },
+  { key: "scheduled_start_seconds", label: "Rozkład: start", cls: "col-narrow" },
+  { key: "scheduled_end_seconds", label: "Rozkład: koniec", cls: "col-narrow" },
   { key: "relation", label: "Relacja", cls: "col-wide" },
   { key: "max_stop_sequence", label: "Nr przyst.", cls: "col-narrow" },
   { key: "last_stop_name", label: "Nazwa przystanku", cls: "col-wide" },
@@ -357,6 +361,10 @@ function renderRowCells(row, columns) {
       html += `<td class="${col.cls} ${delayClass(row[col.key])}">${fmtDelay(row[col.key])}</td>`;
     } else if (col.key === "last_seen_at") {
       html += `<td class="${col.cls}">${fmtTime(row.last_seen_at)}</td>`;
+    } else if (col.key === "scheduled_start_seconds") {
+      html += `<td class="${col.cls}">${row.scheduled_start ?? "—"}</td>`;
+    } else if (col.key === "scheduled_end_seconds") {
+      html += `<td class="${col.cls}">${row.scheduled_end ?? "—"}</td>`;
     } else if (col.key === "last_stop_name") {
       html += `<td class="${col.cls}">${row.last_stop_name ?? "—"}</td>`;
     } else {
@@ -401,13 +409,15 @@ function renderBrigadeListHtml() {
     return `<div class="hint">Brak innych kursów tej brygady w tym dniu w historii.</div>`;
   }
   let html = `<div class="brigade-list-wrap"><table class="segment-table"><thead><tr>
-    <th>Kurs</th><th>Relacja</th><th>Status</th><th>Śr. opóźnienie</th><th>Zamknięty o</th>
+    <th>Kurs</th><th>Rozkład: start</th><th>Rozkład: koniec</th><th>Relacja</th><th>Status</th><th>Śr. opóźnienie</th><th>Zamknięty o</th>
   </tr></thead><tbody>`;
   for (const t of state.brigadeDayTrips) {
     const isActive = state.activeDetailRow && t.trip_id === state.activeDetailRow.trip_id
       && t.start_date === state.activeDetailRow.start_date;
     html += `<tr class="segment-row brigade-trip-row${isActive ? ' active' : ''}" data-trip-id="${t.trip_id}" data-start-date="${t.start_date ?? ''}">
       <td>${extractNumber(t.trip_id, "trip")}</td>
+      <td>${t.scheduled_start ?? "—"}</td>
+      <td>${t.scheduled_end ?? "—"}</td>
       <td class="relation-text">${t.relation ?? "—"}</td>
       <td><span class="status-pill status-${t.status}">${STATUS_LABELS[t.status] || t.status}</span></td>
       <td class="${delayClass(t.avg_delay_seconds)}">${fmtDelayShort(t.avg_delay_seconds)}</td>
