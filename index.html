@@ -155,6 +155,7 @@
     <option value="czesciowy_brak_danych">częściowy - brak danych</option>
     <option value="odwolany">odwołany</option>
   </select>
+  <input type="date" id="dateFilter" style="display:none;">
   <select id="routeFilter">
     <option value="">Wszystkie linie</option>
   </select>
@@ -223,6 +224,7 @@ let state = {
   order: "desc",
   status: "",
   route: "",
+  selectedDate: "", // filtr daty w Historii, format YYYY-MM-DD (puste = wszystkie dni)
   limit: 50,
   offset: 0,
   total: 0,
@@ -283,11 +285,23 @@ async function apiGet(path) {
   return res.json();
 }
 
-async function loadSummary() {
+function renderSummaryCards(cards) {
+  const container = document.getElementById("summaryRow");
+  container.innerHTML = "";
+  for (const c of cards) {
+    const div = document.createElement("div");
+    div.className = "summary-card";
+    div.innerHTML = `<div class="label">${c.label}</div><div class="value">${c.value}</div><div class="sub">${c.sub}</div>`;
+    container.appendChild(div);
+  }
+}
+
+async function loadHistorySummary() {
   try {
-    const data = await apiGet("/api/summary");
-    const container = document.getElementById("summaryRow");
-    container.innerHTML = "";
+    const params = new URLSearchParams();
+    if (state.selectedDate) params.set("start_date", state.selectedDate);
+    const query = params.toString() ? `?${params.toString()}` : "";
+    const data = await apiGet(`/api/summary${query}`);
     const total = data.by_status.reduce((sum, r) => sum + r.n, 0);
     const cards = [
       { label: "Otwarte kursy teraz", value: data.open_trips_count, sub: "" },
@@ -300,14 +314,33 @@ async function loadSummary() {
         sub: row.avg_delay !== null ? `śr. ${Math.round(row.avg_delay)}s` : "brak danych o opóźnieniu",
       });
     }
-    for (const c of cards) {
-      const div = document.createElement("div");
-      div.className = "summary-card";
-      div.innerHTML = `<div class="label">${c.label}</div><div class="value">${c.value}</div><div class="sub">${c.sub}</div>`;
-      container.appendChild(div);
-    }
+    renderSummaryCards(cards);
   } catch (e) {
     console.error("Błąd ładowania podsumowania:", e);
+  }
+}
+
+async function loadTodaySummary() {
+  try {
+    const data = await apiGet("/api/today_summary");
+    renderSummaryCards([
+      { label: "Dzisiaj w planie", value: data.planned_today, sub: "" },
+      { label: "Kursy on-line", value: data.online, sub: "aktywnie zalogowany wagon" },
+      { label: "Kursy off-line", value: data.offline, sub: "brak zalogowanego wagonu" },
+      { label: "Pozostało do wykonania", value: data.remaining, sub: "" },
+      { label: "Zakończone w całości", value: data.finished_full, sub: "" },
+      { label: "Częściowo zakończone", value: data.finished_partial, sub: "brak danych / zawrócony" },
+    ]);
+  } catch (e) {
+    console.error("Błąd ładowania podsumowania dnia:", e);
+  }
+}
+
+async function loadSummary() {
+  if (state.tab === "history") {
+    await loadHistorySummary();
+  } else {
+    await loadTodaySummary();
   }
 }
 
@@ -692,6 +725,7 @@ async function loadHistoryTable() {
     });
     if (state.status) params.set("status", state.status);
     if (state.route) params.set("route_id", state.route);
+    if (state.selectedDate) params.set("start_date", state.selectedDate);
 
     const data = await apiGet(`/api/trip_history?${params.toString()}`);
     state.total = data.total;
@@ -753,9 +787,11 @@ async function loadLiveTable() {
 async function loadTable() {
   if (state.tab === "history") {
     document.getElementById("statusFilter").style.display = "";
+    document.getElementById("dateFilter").style.display = "";
     await loadHistoryTable();
   } else {
     document.getElementById("statusFilter").style.display = "none";
+    document.getElementById("dateFilter").style.display = "none";
     document.getElementById("paginationRow").style.display = "none";
     await loadLiveTable();
   }
@@ -779,13 +815,23 @@ document.querySelectorAll(".tab-btn").forEach((btn) => {
     btn.classList.add("active");
     state.tab = btn.dataset.tab;
     state.offset = 0;
-    if (state.apiBase) loadTable();
+    if (state.apiBase) {
+      loadSummary();
+      loadTable();
+    }
   });
 });
 
 document.getElementById("statusFilter").addEventListener("change", (e) => {
   state.status = e.target.value;
   state.offset = 0;
+  loadTable();
+});
+
+document.getElementById("dateFilter").addEventListener("change", (e) => {
+  state.selectedDate = e.target.value; // YYYY-MM-DD z <input type="date">, lub "" gdy wyczyszczone
+  state.offset = 0;
+  loadSummary();
   loadTable();
 });
 
