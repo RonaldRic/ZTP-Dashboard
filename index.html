@@ -16,6 +16,30 @@
     --warn: #f0b429;
     --bad: #f2545b;
     --neutral: #6b7280;
+    --row-hover: #1c2029;
+    --detail-bg: #12141a;
+    --ticks-bg: #0e1015;
+    --ticks-border: #20242e;
+    --pass-separator-bg: #1a1408;
+  }
+  /* Tryb dzienny - biało-czarny, wlaczany przyciskiem w naglowku,
+     zapamietywany w localStorage zeby przetrwal odswiezenie strony. */
+  :root.theme-light {
+    --bg: #ffffff;
+    --panel: #f5f6f8;
+    --panel-border: #d8dce3;
+    --text: #14161a;
+    --text-dim: #5b6472;
+    --accent: #1a6fd6;
+    --ok: #1a8f5c;
+    --warn: #96700a;
+    --bad: #c22b32;
+    --neutral: #6b7280;
+    --row-hover: #e9ebef;
+    --detail-bg: #eef0f3;
+    --ticks-bg: #e4e7ec;
+    --ticks-border: #cdd2da;
+    --pass-separator-bg: #fdeecb;
   }
   * { box-sizing: border-box; }
   body {
@@ -42,6 +66,9 @@
   .api-config button {
     background: var(--accent); color: #06121f; border: none; padding: 6px 12px;
     border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  .api-config button#themeToggleBtn {
+    background: var(--panel); color: var(--text); border: 1px solid var(--panel-border);
   }
   .tabs { display: flex; gap: 4px; padding: 12px 20px 0 20px; }
   .tab-btn {
@@ -70,10 +97,10 @@
   th:hover { color: var(--text); }
   th .arrow { font-size: 10px; margin-left: 4px; opacity: 0.6; }
   tr.data-row { cursor: pointer; }
-  tr.data-row:hover td { background: #1c2029; }
-  tr.data-row.expanded td { background: #1c2029; }
-  .col-narrow { width: 68px; }
-  .col-medium { width: 90px; }
+  tr.data-row:hover td { background: var(--row-hover); }
+  tr.data-row.expanded td { background: var(--row-hover); }
+  .col-narrow { width: 84px; }
+  .col-medium { width: 104px; }
   .col-wide { width: auto; min-width: 160px; white-space: normal; }
   .status-pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
   .status-pelny { background: rgba(62,207,142,0.15); color: var(--ok); }
@@ -97,7 +124,7 @@
   .hint { color: var(--text-dim); font-size: 13px; }
 
   /* Rozwijany wiersz z przebiegiem kursu */
-  tr.detail-row td { background: #12141a; padding: 0; cursor: default; white-space: normal; }
+  tr.detail-row td { background: var(--detail-bg); padding: 0; cursor: default; white-space: normal; }
   .detail-wrap { padding: 12px 16px 16px 16px; }
   .detail-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; flex-wrap: wrap; gap: 6px; }
   .detail-header .title { font-weight: 600; font-size: 13px; }
@@ -106,11 +133,11 @@
   .segment-table th, .segment-table td { padding: 6px 8px; border-bottom: 1px solid var(--panel-border); white-space: nowrap; }
   .segment-table th { position: static; cursor: default; color: var(--text-dim); }
   .segment-row { cursor: pointer; }
-  .segment-row:hover td { background: #1a1d25; }
+  .segment-row:hover td { background: var(--row-hover); }
   .segment-row .toggle { display: inline-block; width: 14px; color: var(--text-dim); }
-  .ticks-row td { background: #0e1015; padding: 4px 8px 8px 28px; }
+  .ticks-row td { background: var(--ticks-bg); padding: 4px 8px 8px 28px; }
   .ticks-table { width: 100%; border-collapse: collapse; font-size: 11.5px; color: var(--text-dim); }
-  .ticks-table td { padding: 3px 8px; border-bottom: 1px dotted #20242e; white-space: nowrap; }
+  .ticks-table td { padding: 3px 8px; border-bottom: 1px dotted var(--ticks-border); white-space: nowrap; }
   .brigade-toggle-btn {
     background: var(--panel); border: 1px solid var(--panel-border); color: var(--accent);
     padding: 6px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; margin-bottom: 10px;
@@ -119,8 +146,9 @@
   .brigade-list-wrap { margin-bottom: 14px; border: 1px solid var(--panel-border); border-radius: 8px; overflow: hidden; }
   .brigade-list-wrap .segment-table { font-size: 11.5px; }
   tr.brigade-trip-row.active td { background: rgba(77,163,255,0.12); }
+  td.vehicle-swap { color: var(--warn); font-weight: 600; }
   tr.pass-separator td {
-    background: #1a1408; color: var(--warn); font-weight: 600; font-size: 11.5px;
+    background: var(--pass-separator-bg); color: var(--warn); font-weight: 600; font-size: 11.5px;
     padding: 6px 8px; border-bottom: 1px solid var(--panel-border); white-space: normal;
   }
   .multipass-banner {
@@ -137,6 +165,7 @@
     <span>Adres API:</span>
     <input id="apiBaseInput" type="text" placeholder="https://twoj-serwis.up.railway.app" value="https://tramwaje-krakow-production.up.railway.app">
     <button id="connectBtn">Połącz</button>
+    <button id="themeToggleBtn" title="Przełącz tryb jasny/ciemny">☀️ Tryb jasny</button>
   </div>
 </header>
 
@@ -324,12 +353,12 @@ async function loadTodaySummary() {
   try {
     const data = await apiGet("/api/today_summary");
     renderSummaryCards([
-      { label: "Dzisiaj w planie", value: data.planned_today, sub: "" },
-      { label: "Kursy on-line", value: data.online, sub: "aktywnie zalogowany wagon" },
-      { label: "Kursy off-line", value: data.offline, sub: "brak zalogowanego wagonu" },
-      { label: "Pozostało do wykonania", value: data.remaining, sub: "" },
-      { label: "Zakończone w całości", value: data.finished_full, sub: "" },
-      { label: "Częściowo zakończone", value: data.finished_partial, sub: "brak danych / zawrócony" },
+      { label: "Kursy zaplanowane na dzisiaj", value: data.planned_today, sub: "" },
+      { label: "Kursy ON-line", value: data.online, sub: "aktualnie zalogowane brygady" },
+      { label: "Kursy OFF-line", value: data.offline, sub: "aktualnie niezalogowane brygady" },
+      { label: "Kursy pozostałe do wykonania (dziś)", value: data.remaining, sub: "" },
+      { label: "Kursy zakończone w całości (dziś)", value: data.finished_full, sub: "" },
+      { label: "Kursy częściowo zakończone (dziś)", value: data.finished_partial, sub: "brak danych / zawrócony / zjazd awaryjny" },
     ]);
   } catch (e) {
     console.error("Błąd ładowania podsumowania dnia:", e);
@@ -367,12 +396,28 @@ function renderArrow(key) {
   return state.order === "asc" ? '<span class="arrow">▲</span>' : '<span class="arrow">▼</span>';
 }
 
+// Zajezdnia -> litera uzywana w pelnym, 5-znakowym numerze taborowym MPK
+// Krakow (np. RP718 = tramwaj [R], Podgorze [P], nr 718). Litera drugiego
+// znaku zalezy od zajezdni - stad potrzebujemy vehicle_depot z API (ktore
+// juz przychodzi z backendu do tooltipa), nie tylko samej liczby.
+const DEPOT_LETTER = { "Podgórze": "P", "Nowa Huta": "N" };
+
+function fullVehicleNumber(row) {
+  if (row.vehicle_id === null || row.vehicle_id === undefined) return "—";
+  const depotLetter = DEPOT_LETTER[row.vehicle_depot];
+  const numStr = String(row.vehicle_id).padStart(3, "0");
+  // Bez znanej zajezdni (numer spoza slownika vehicle_fleet.py) nie da sie
+  // jednoznacznie ustalic litery - pokazujemy wtedy sama liczbe, zeby nie
+  // zgadywac/nie pokazywac falszywego prefiksu.
+  return depotLetter ? `R${depotLetter}${numStr}` : numStr;
+}
+
 function vehicleCell(row) {
   const parts = [];
   if (row.vehicle_type) parts.push(row.vehicle_type);
   if (row.vehicle_depot) parts.push(row.vehicle_depot);
   const title = parts.length ? parts.join(" · ") : "typ nieznany";
-  return `<td title="${title}">${row.vehicle_id ?? "—"}</td>`;
+  return `<td title="${title}">${fullVehicleNumber(row)}</td>`;
 }
 
 function renderRowCells(row, columns) {
@@ -442,13 +487,22 @@ function renderBrigadeListHtml() {
     return `<div class="hint">Brak innych kursów tej brygady w tym dniu w historii.</div>`;
   }
   let html = `<div class="brigade-list-wrap"><table class="segment-table"><thead><tr>
-    <th>Kurs</th><th>Rozkład: start</th><th>Rozkład: koniec</th><th>Relacja</th><th>Status</th><th>Śr. opóźnienie</th><th>Zamknięty o</th>
+    <th>Kurs</th><th>Pojazd</th><th>Rozkład: start</th><th>Rozkład: koniec</th><th>Relacja</th><th>Status</th><th>Śr. opóźnienie</th><th>Zamknięty o</th>
   </tr></thead><tbody>`;
+  let prevVehicle = null;
   for (const t of state.brigadeDayTrips) {
     const isActive = state.activeDetailRow && t.trip_id === state.activeDetailRow.trip_id
       && t.start_date === state.activeDetailRow.start_date;
+    // Jesli numer pojazdu zmienil sie wzgledem poprzedniego kursu tej samej
+    // brygady (lista jest chronologiczna) - podswietlamy to na zolto, zeby
+    // od razu bylo widac ewentualna podmiane wagonu (rezerwa) w ciagu dnia.
+    const vehicleChanged = prevVehicle !== null && t.vehicle_id && t.vehicle_id !== prevVehicle;
+    if (t.vehicle_id) prevVehicle = t.vehicle_id;
+    const vehicleCellClass = vehicleChanged ? "vehicle-swap" : "";
+    const vehicleTitle = vehicleChanged ? "title=\"Inny wagon niż w poprzednim kursie tej brygady\"" : "";
     html += `<tr class="segment-row brigade-trip-row${isActive ? ' active' : ''}" data-trip-id="${t.trip_id}" data-start-date="${t.start_date ?? ''}">
       <td>${extractNumber(t.trip_id, "trip")}</td>
+      <td class="${vehicleCellClass}" ${vehicleTitle}>${fullVehicleNumber(t)}${vehicleChanged ? " ⇄" : ""}</td>
       <td>${t.scheduled_start ?? "—"}</td>
       <td>${t.scheduled_end ?? "—"}</td>
       <td class="relation-text">${t.relation ?? "—"}</td>
@@ -486,7 +540,7 @@ function renderDetailContent(row, signals) {
     return `<div class="detail-wrap">
       <div class="detail-header">
         <div class="title">Przebieg kursu ${extractNumber(row.trip_id, "trip")} · linia ${row.route_short_name ?? row.route_id ?? "?"}</div>
-        <div class="sub">${row.relation ?? ""} · pojazd ${row.vehicle_id ?? "?"}</div>
+        <div class="sub">${row.relation ?? ""} · pojazd ${fullVehicleNumber(row)}</div>
       </div>
       <div id="brigadeListArea">${renderBrigadeListHtml()}</div>
       <div class="empty-state">Brak zarejestrowanych sygnałów dla tego kursu.</div>
@@ -496,7 +550,7 @@ function renderDetailContent(row, signals) {
   let html = `<div class="detail-wrap">
     <div class="detail-header">
       <div class="title">Przebieg kursu ${extractNumber(row.trip_id, "trip")} · linia ${row.route_short_name ?? row.route_id ?? "?"} · brygada ${row.brigade_label ?? extractNumber(row.block_id, "block")}</div>
-      <div class="sub">${row.relation ?? ""} · pojazd ${row.vehicle_id ?? "?"}${row.vehicle_type ? " (" + row.vehicle_type + ")" : ""}</div>
+      <div class="sub">${row.relation ?? ""} · pojazd ${fullVehicleNumber(row)}${row.vehicle_type ? " (" + row.vehicle_type + ")" : ""}</div>
     </div>
     <div id="brigadeListArea">${renderBrigadeListHtml()}</div>
     ${renderMultiPassBanner(segments)}
@@ -743,6 +797,16 @@ async function loadHistoryTable() {
   }
 }
 
+function brigadeSortKey(label) {
+  // Etykieta typu "52-01" musi sortowac sie numerycznie (linia, potem
+  // numer brygady) - zwykle porownanie stringow dalo(by) np. "9-05" PO
+  // "74-01" (bo znak "9" > "7"), mimo ze numerycznie 9 < 74.
+  if (!label) return Number.POSITIVE_INFINITY;
+  const m = label.match(/^(\d+)-(\d+)/);
+  if (!m) return Number.POSITIVE_INFINITY;
+  return parseInt(m[1], 10) * 10000 + parseInt(m[2], 10);
+}
+
 function getSortValue(row, key) {
   // "Linia" widoczna na ekranie to route_short_name (np. "62"), a nie
   // surowe row.route_id (np. "route_63") - sortowanie po surowym route_id
@@ -752,6 +816,9 @@ function getSortValue(row, key) {
     const v = row.route_short_name ?? row.route_id;
     const n = Number(v);
     return Number.isNaN(n) ? v : n;
+  }
+  if (key === "block_id") {
+    return brigadeSortKey(row.brigade_label);
   }
   return row[key];
 }
@@ -857,7 +924,42 @@ setInterval(() => {
   if (state.apiBase && !state.expandedKey) refreshAll();
 }, 30000);
 
+// Tryb jasny/ciemny - zapamietywany miedzy wizytami (localStorage), zeby
+// nie trzeba bylo przelaczac za kazdym razem po otwarciu dashboardu.
+const THEME_STORAGE_KEY = "ztp-dashboard-theme";
+
+function applyTheme(theme) {
+  const isLight = theme === "light";
+  document.documentElement.classList.toggle("theme-light", isLight);
+  const btn = document.getElementById("themeToggleBtn");
+  btn.textContent = isLight ? "🌙 Tryb ciemny" : "☀️ Tryb jasny";
+}
+
+function initTheme() {
+  let saved = null;
+  try {
+    saved = localStorage.getItem(THEME_STORAGE_KEY);
+  } catch (e) {
+    // localStorage moze byc niedostepny (np. tryb prywatny) - wtedy po
+    // prostu startujemy zawsze na ciemnym, bez zapamietywania.
+  }
+  applyTheme(saved === "light" ? "light" : "dark");
+}
+
+document.getElementById("themeToggleBtn").addEventListener("click", () => {
+  const isCurrentlyLight = document.documentElement.classList.contains("theme-light");
+  const next = isCurrentlyLight ? "dark" : "light";
+  applyTheme(next);
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, next);
+  } catch (e) {
+    // brak localStorage - przelacznik dalej dziala w ramach tej wizyty,
+    // tylko nie przetrwa odswiezenia strony.
+  }
+});
+
 window.addEventListener("DOMContentLoaded", () => {
+  initTheme();
   document.getElementById("statusFilter").style.display = "none";
   const defaultUrl = document.getElementById("apiBaseInput").value.trim();
   if (defaultUrl) {
