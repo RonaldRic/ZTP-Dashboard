@@ -70,7 +70,7 @@
   .api-config button#themeToggleBtn {
     background: var(--panel); color: var(--text); border: 1px solid var(--panel-border);
   }
-  .tabs { display: flex; gap: 4px; padding: 12px 20px 0 20px; }
+  .tabs { display: flex; justify-content: space-between; align-items: center; gap: 4px; padding: 12px 20px 0 20px; }
   .tab-btn {
     background: transparent; border: none; color: var(--text-dim); padding: 10px 16px;
     font-size: 14px; font-weight: 600; cursor: pointer; border-bottom: 2px solid transparent;
@@ -85,6 +85,22 @@
   .summary-card .label { font-size: 12px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; }
   .summary-card .value { font-size: 22px; font-weight: 700; margin-top: 4px; }
   .summary-card .sub { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+  .offline-brigades { margin: 0 20px 16px 20px; }
+  .offline-brigades summary {
+    cursor: pointer; font-size: 13px; color: var(--bad); font-weight: 600;
+    padding: 8px 12px; background: var(--panel); border: 1px solid var(--panel-border);
+    border-radius: 8px; list-style: none;
+  }
+  .offline-brigades summary::-webkit-details-marker { display: none; }
+  .offline-brigades summary::before { content: "▸ "; }
+  .offline-brigades[open] summary::before { content: "▾ "; }
+  .offline-brigades table {
+    width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 13px;
+    background: var(--panel); border: 1px solid var(--panel-border); border-radius: 8px; overflow: hidden;
+  }
+  .offline-brigades th, .offline-brigades td { padding: 6px 12px; text-align: left; border-bottom: 1px solid var(--panel-border); }
+  .offline-brigades th { color: var(--text-dim); font-weight: 600; font-size: 12px; text-transform: uppercase; }
+  .offline-brigades tr:last-child td { border-bottom: none; }
   .controls { padding: 0 20px 12px 20px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
   select, input[type="text"] {
     background: var(--panel); border: 1px solid var(--panel-border); color: var(--text);
@@ -107,10 +123,9 @@
   .status-czesciowy_zawrocony { background: rgba(240,180,41,0.15); color: var(--warn); }
   .status-czesciowy_brak_danych { background: rgba(242,84,91,0.15); color: var(--bad); }
   .status-odwolany { background: rgba(107,114,128,0.15); color: var(--neutral); }
-  .delay-bad { color: var(--bad); font-weight: 600; }
-  .delay-warn { color: var(--warn); font-weight: 600; }
-  .delay-ok { color: var(--ok); font-weight: 600; }
-  .delay-none { color: var(--text-dim); }
+  /* Kolor opoznien liczony teraz jako ciagly gradient (patrz delayStyle()
+     w JS) i wstawiany jako inline style, nie klasa - stare .delay-ok/
+     warn/bad/none nie sa juz uzywane. */
   .relation-text { color: var(--text-dim); font-size: 12px; white-space: normal; }
   .pagination { display: flex; gap: 8px; align-items: center; padding: 12px 20px; font-size: 13px; color: var(--text-dim); }
   .pagination button {
@@ -170,11 +185,16 @@
 </header>
 
 <div class="tabs">
-  <button class="tab-btn active" data-tab="live">Aktualne kursy</button>
   <button class="tab-btn" data-tab="history">Historia</button>
+  <!-- Miejsce na przyszle podkategorie TRAM / BUS MPK / BUS Mobilis
+       (dla obu zakladek) trafi tutaj, posrodku, gdy dojdzie obsluga
+       autobusow - stad Historia i Aktualne kursy sa celowo rozsuniete
+       na przeciwlegle konce paska zakladek. -->
+  <button class="tab-btn active" data-tab="live">Aktualne kursy</button>
 </div>
 
 <div id="summaryRow" class="summary-row"></div>
+<div id="offlineBrigadesContainer"></div>
 
 <div class="controls">
   <select id="statusFilter">
@@ -288,11 +308,48 @@ function fmtTimeShort(unixTs) {
   return d.toLocaleString("pl-PL", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
-function delayClass(seconds) {
-  if (seconds === null || seconds === undefined) return "delay-none";
-  if (Math.abs(seconds) < 120) return "delay-ok";
-  if (Math.abs(seconds) < 360) return "delay-warn";
-  return "delay-bad";
+// Ciagly gradient koloru opoznienia, wzorowany na legendzie z tomekzaw.pl
+// (skala -3/0/5/10/15/20/40/60 min). Miedzy sasiadujacymi punktami kolor
+// jest liniowo interpolowany (component po komponencie RGB), nie skokowy
+// jak poprzednie 3 progi (delay-ok/warn/bad). Dokladne odcienie sa moim
+// przyblizeniem "na oko" ze zrzutu ekranu legendy - do skorygowania, jesli
+// po wdrozeniu beda odstawac od oryginalu.
+const DELAY_COLOR_STOPS = [
+  [-3, [59, 130, 246]],   // niebieski - wyraznie przed czasem
+  [0, [34, 197, 94]],     // zielony - na czas
+  [5, [163, 217, 57]],    // zolto-zielony
+  [10, [244, 208, 63]],   // zolty
+  [15, [243, 156, 18]],   // pomaranczowy
+  [20, [230, 126, 34]],   // ciemniejszy pomaranczowy
+  [40, [231, 76, 60]],    // czerwony
+  [60, [146, 43, 33]],    // ciemny czerwony/bordowy
+];
+
+function _rgbToHex([r, g, b]) {
+  return "#" + [r, g, b].map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0")).join("");
+}
+
+function delayColor(seconds) {
+  if (seconds === null || seconds === undefined) return null; // brak danych - kolor tekstu domyslny (--text-dim)
+  const minutes = seconds / 60;
+  const stops = DELAY_COLOR_STOPS;
+  if (minutes <= stops[0][0]) return _rgbToHex(stops[0][1]);
+  if (minutes >= stops[stops.length - 1][0]) return _rgbToHex(stops[stops.length - 1][1]);
+  for (let i = 0; i < stops.length - 1; i++) {
+    const [m1, c1] = stops[i];
+    const [m2, c2] = stops[i + 1];
+    if (minutes >= m1 && minutes <= m2) {
+      const t = (minutes - m1) / (m2 - m1);
+      return _rgbToHex(c1.map((v, idx) => v + (c2[idx] - v) * t));
+    }
+  }
+  return _rgbToHex(stops[stops.length - 1][1]);
+}
+
+function delayStyle(seconds) {
+  const color = delayColor(seconds);
+  if (color === null) return `color: var(--text-dim);`;
+  return `color: ${color}; font-weight: 600;`;
 }
 
 function fmtDelay(seconds) {
@@ -325,6 +382,34 @@ function renderSummaryCards(cards) {
   }
 }
 
+function renderOfflineBrigades(list) {
+  const container = document.getElementById("offlineBrigadesContainer");
+  if (!list || list.length === 0) {
+    container.innerHTML = "";
+    return;
+  }
+  const rows = list.map((b) => {
+    const window = (b.scheduled_start && b.scheduled_end) ? `${b.scheduled_start}–${b.scheduled_end}` : "—";
+    const lastSeen = b.last_seen_at !== null && b.last_seen_at !== undefined
+      ? fmtTime(b.last_seen_at)
+      : "brak sygnału dzisiaj";
+    return `<tr>
+      <td>${b.brigade_label || b.block_id}</td>
+      <td>${b.route_short_name ?? "—"}</td>
+      <td>${window}</td>
+      <td>${lastSeen}</td>
+    </tr>`;
+  }).join("");
+  container.innerHTML = `
+    <details class="offline-brigades">
+      <summary>Brygady bez widocznego pojazdu (${list.length}) - powinny teraz kursować, ale nie wysyłają sygnału</summary>
+      <table>
+        <thead><tr><th>Brygada</th><th>Linia</th><th>Rozkładowe okno</th><th>Ostatni sygnał</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </details>`;
+}
+
 async function loadHistorySummary() {
   try {
     const params = new URLSearchParams();
@@ -344,6 +429,7 @@ async function loadHistorySummary() {
       });
     }
     renderSummaryCards(cards);
+    document.getElementById("offlineBrigadesContainer").innerHTML = "";
   } catch (e) {
     console.error("Błąd ładowania podsumowania:", e);
   }
@@ -360,6 +446,7 @@ async function loadTodaySummary() {
       { label: "Kursy zakończone w całości (dziś)", value: data.finished_full, sub: "" },
       { label: "Kursy częściowo zakończone (dziś)", value: data.finished_partial, sub: "brak danych / zawrócony / zjazd awaryjny" },
     ]);
+    renderOfflineBrigades(data.offline_brigades);
   } catch (e) {
     console.error("Błąd ładowania podsumowania dnia:", e);
   }
@@ -461,7 +548,7 @@ function renderRowCells(row, columns) {
     } else if (col.key === "status") {
       html += `<td class="${col.cls}"><span class="status-pill status-${row.status}">${STATUS_LABELS[row.status] || row.status}</span></td>`;
     } else if (col.key === "avg_delay_seconds" || col.key === "max_delay_seconds" || col.key === "last_delay_seconds") {
-      html += `<td class="${col.cls} ${delayClass(row[col.key])}">${fmtDelay(row[col.key])}</td>`;
+      html += `<td class="${col.cls}" style="${delayStyle(row[col.key])}">${fmtDelay(row[col.key])}</td>`;
     } else if (col.key === "last_seen_at") {
       html += `<td class="${col.cls}">${fmtTime(row.last_seen_at)}</td>`;
     } else if (col.key === "scheduled_start_seconds") {
@@ -532,7 +619,7 @@ function renderBrigadeListHtml() {
       <td>${t.scheduled_end ?? "—"}</td>
       <td class="relation-text">${t.relation ?? "—"}</td>
       <td><span class="status-pill status-${t.status}">${STATUS_LABELS[t.status] || t.status}</span></td>
-      <td class="${delayClass(t.avg_delay_seconds)}">${fmtDelayShort(t.avg_delay_seconds)}</td>
+      <td style="${delayStyle(t.avg_delay_seconds)}">${fmtDelayShort(t.avg_delay_seconds)}</td>
       <td>${fmtTime(t.last_seen_at)}</td>
     </tr>`;
   }
@@ -612,13 +699,13 @@ function renderDetailContent(row, signals) {
       <td>${seg.stop_name ?? "—"}</td>
       <td>${fmtTimeShort(seg.start)}</td>
       <td>${fmtTimeShort(seg.end)}</td>
-      <td class="${delayClass(seg.maxDelay)}">${delayRange}</td>
+      <td style="${delayStyle(seg.maxDelay)}">${delayRange}</td>
       <td>${seg.signals.length}</td>
     </tr>`;
     if (isOpen) {
       html += `<tr class="ticks-row"><td colspan="7"><table class="ticks-table">`;
       for (const s of seg.signals) {
-        html += `<tr><td>${fmtTimeShort(s.recorded_at)}</td><td class="${delayClass(s.delay_seconds)}">${fmtDelay(s.delay_seconds)}</td></tr>`;
+        html += `<tr><td>${fmtTimeShort(s.recorded_at)}</td><td style="${delayStyle(s.delay_seconds)}">${fmtDelay(s.delay_seconds)}</td></tr>`;
       }
       html += `</table></td></tr>`;
     }
