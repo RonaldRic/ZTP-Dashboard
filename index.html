@@ -396,20 +396,45 @@ function renderArrow(key) {
   return state.order === "asc" ? '<span class="arrow">▲</span>' : '<span class="arrow">▼</span>';
 }
 
-// Zajezdnia -> litera uzywana w pelnym, 5-znakowym numerze taborowym MPK
-// Krakow (np. RP718 = tramwaj [R], Podgorze [P], nr 718). Litera drugiego
-// znaku zalezy od zajezdni - stad potrzebujemy vehicle_depot z API (ktore
-// juz przychodzi z backendu do tooltipa), nie tylko samej liczby.
-const DEPOT_LETTER = { "Podgórze": "P", "Nowa Huta": "N" };
+// Pelny 5-znakowy numer taborowy MPK Krakow - potwierdzone zrodlowo na
+// psmkms.krakow.pl (zajezdnia Podgorze i Nowa Huta, stan 18.07.2026):
+// pierwsza litera = zajezdnia (R=Podgorze, H=Nowa Huta), DRUGA LITERA
+// ZALEZY OD KONKRETNEGO TYPU WAGONU w obrebie tej zajezdni (nie jest
+// stala dla calej zajezdni!) - np. w Nowej Hucie wagon silnikowy E1+c3
+// dostaje "HW", ale jego WLASNA doczepa c3 dostaje juz "HB". Klucz to
+// para (zajezdnia, typ) - dokladnie ta sama, ktora juz masz w
+// vehicle_fleet.py::_FLEET_RANGES po stronie backendu.
+const VEHICLE_PREFIX_BY_DEPOT_TYPE = {
+  "Podgórze|105Na/105NaD": "RZ",
+  "Podgórze|GT8C": "RF",
+  "Podgórze|GT8N": "RF",
+  "Podgórze|NGT6": "RP",
+  "Podgórze|NGT8": "RY",
+  "Podgórze|126N": "RY",
+  "Podgórze|Tango Lajkonik": "RY",
+  "Podgórze|Tango Lajkonik II": "RY",
+  "Podgórze|2014N (Krakowiak)": "RG",
+  "Nowa Huta|E1": "HW",
+  "Nowa Huta|E1+c3 (wagon silnikowy)": "HW",
+  "Nowa Huta|E1+c3 (doczepa c3)": "HB",
+  "Nowa Huta|N8S": "HK",
+  "Nowa Huta|N8C": "HK",
+  "Nowa Huta|EU8N": "HL",
+  "Nowa Huta|Tango Lajkonik": "HY",
+  "Nowa Huta|Tango Lajkonik II": "HY",
+  "Nowa Huta|405N-Kr": "HG",
+  "Nowa Huta|2014N (Krakowiak)": "HG",
+};
 
 function fullVehicleNumber(row) {
   if (row.vehicle_id === null || row.vehicle_id === undefined) return "—";
-  const depotLetter = DEPOT_LETTER[row.vehicle_depot];
+  const key = `${row.vehicle_depot}|${row.vehicle_type}`;
+  const prefix = VEHICLE_PREFIX_BY_DEPOT_TYPE[key];
   const numStr = String(row.vehicle_id).padStart(3, "0");
-  // Bez znanej zajezdni (numer spoza slownika vehicle_fleet.py) nie da sie
-  // jednoznacznie ustalic litery - pokazujemy wtedy sama liczbe, zeby nie
-  // zgadywac/nie pokazywac falszywego prefiksu.
-  return depotLetter ? `R${depotLetter}${numStr}` : numStr;
+  // Bez znanego typu+zajezdni (numer spoza vehicle_fleet.py, albo nowy
+  // typ ktorego jeszcze nie ma w tabeli powyzej) pokazujemy sama liczbe,
+  // zeby nie zgadywac/nie pokazac falszywego prefiksu.
+  return prefix ? `${prefix}${numStr}` : numStr;
 }
 
 function vehicleCell(row) {
