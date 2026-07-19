@@ -879,9 +879,11 @@ function renderTable(rows, columns) {
   });
 }
 
-async function loadHistoryTable() {
+async function loadHistoryTable(isBackgroundRefresh) {
   const container = document.getElementById("tableContainer");
-  container.innerHTML = '<div class="loading">Ładowanie...</div>';
+  if (!isBackgroundRefresh) {
+    container.innerHTML = '<div class="loading">Ładowanie...</div>';
+  }
   try {
     const params = new URLSearchParams({
       sort: state.sort,
@@ -951,9 +953,11 @@ function sortAndRenderLive() {
   document.getElementById("paginationRow").style.display = "none";
 }
 
-async function loadLiveTable() {
+async function loadLiveTable(isBackgroundRefresh) {
   const container = document.getElementById("tableContainer");
-  container.innerHTML = '<div class="loading">Ładowanie...</div>';
+  if (!isBackgroundRefresh) {
+    container.innerHTML = '<div class="loading">Ładowanie...</div>';
+  }
   try {
     const data = await apiGet("/api/open_trips");
     state.liveRowsCache = data.rows;
@@ -963,22 +967,22 @@ async function loadLiveTable() {
   }
 }
 
-async function loadTable() {
+async function loadTable(isBackgroundRefresh) {
   if (state.tab === "history") {
     document.getElementById("statusFilter").style.display = "";
     document.getElementById("dateFilter").style.display = "";
-    await loadHistoryTable();
+    await loadHistoryTable(isBackgroundRefresh);
   } else {
     document.getElementById("statusFilter").style.display = "none";
     document.getElementById("dateFilter").style.display = "none";
     document.getElementById("paginationRow").style.display = "none";
-    await loadLiveTable();
+    await loadLiveTable(isBackgroundRefresh);
   }
 }
 
-async function refreshAll() {
+async function refreshAll(isBackgroundRefresh) {
   await Promise.all([loadSummary(), loadRoutes()]);
-  await loadTable();
+  await loadTable(isBackgroundRefresh);
 }
 
 document.getElementById("connectBtn").addEventListener("click", () => {
@@ -1032,8 +1036,11 @@ document.getElementById("nextBtn").addEventListener("click", () => {
 
 // Odswiezanie co 30s, jesli juz polaczono - ale NIE gdy ktos aktualnie
 // przeglada rozwiniety podglad kursu (inaczej co 30s znikalby spod rak).
+// isBackgroundRefresh=true pomija placeholder "Ladowanie..." - dane od razu
+// podmieniaja stara tabele w jednym malowaniu, bez migania do pustego stanu
+// posrodku (to bylo widoczne przy KAZDYM automatycznym odswiezeniu wczesniej).
 setInterval(() => {
-  if (state.apiBase && !state.expandedKey) refreshAll();
+  if (state.apiBase && !state.expandedKey) refreshAll(true);
 }, 30000);
 
 // Tryb jasny/ciemny - zapamietywany miedzy wizytami (localStorage), zeby
