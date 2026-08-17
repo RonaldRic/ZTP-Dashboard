@@ -289,8 +289,16 @@ function rowKey(row) {
   return `${row.trip_id}__${row.start_date ?? ""}`;
 }
 
-function extractNumber(idStr, prefix) {
+function extractNumber(idStr, prefix, mode) {
   if (!idStr) return "—";
+  // Autobusowe trip_id (MPK: "20260816_1_127458358_2", Mobilis: "1665_18401")
+  // nie zawieraja literalu "trip_" jak tramwajowe (np. "block_5_trip_1274_service_2"),
+  // wiec regex ponizej i tak by nic nie znalazl - skracamy je do ostatniego
+  // segmentu po podkresleniu zamiast wyswietlac caly, dlugi identyfikator.
+  if (mode === "bus_mpk" || mode === "bus_mobilis") {
+    const parts = idStr.split("_");
+    return parts.length > 1 ? parts[parts.length - 1] : idStr;
+  }
   const re = new RegExp(prefix + "_(\\d+)");
   const m = idStr.match(re);
   return m ? m[1] : idStr;
@@ -355,7 +363,7 @@ function delayStyle(seconds) {
 function fmtDelay(seconds) {
   if (seconds === null || seconds === undefined) return "brak danych";
   const mins = Math.round(seconds / 60);
-  return `${seconds}s (~${mins} min)`;
+  return `${seconds}s (~${mins}')`;
 }
 
 function fmtDelayShort(seconds) {
@@ -595,7 +603,7 @@ function renderRowCells(row, columns) {
   let html = "";
   for (const col of columns) {
     if (col.key === "trip_id") {
-      html += `<td class="${col.cls}" title="${row.trip_id ?? ""}">${extractNumber(row.trip_id, "trip")}</td>`;
+      html += `<td class="${col.cls}" title="${row.trip_id ?? ""}">${extractNumber(row.trip_id, "trip", row.mode)}</td>`;
     } else if (col.key === "block_id") {
       html += `<td class="${col.cls}" title="${row.block_id ?? ""}">${row.brigade_label ?? extractNumber(row.block_id, "block")}</td>`;
     } else if (col.key === "route_id") {
@@ -672,7 +680,7 @@ function renderBrigadeListHtml() {
     const vehicleCellClass = vehicleChanged ? "vehicle-swap" : "";
     const vehicleTitle = vehicleChanged ? "title=\"Inny wagon niż w poprzednim kursie tej brygady\"" : "";
     html += `<tr class="segment-row brigade-trip-row${isActive ? ' active' : ''}" data-trip-id="${t.trip_id}" data-start-date="${t.start_date ?? ''}">
-      <td>${extractNumber(t.trip_id, "trip")}</td>
+      <td>${extractNumber(t.trip_id, "trip", t.mode)}</td>
       <td class="${vehicleCellClass}" ${vehicleTitle}>${fullVehicleNumber(t)}${vehicleChanged ? " ⇄" : ""}</td>
       <td>${t.scheduled_start ?? "—"}</td>
       <td>${t.scheduled_end ?? "—"}</td>
@@ -710,7 +718,7 @@ function renderDetailContent(row, signals) {
   if (!signals.length) {
     return `<div class="detail-wrap">
       <div class="detail-header">
-        <div class="title">Przebieg kursu ${extractNumber(row.trip_id, "trip")} · linia ${row.route_short_name ?? row.route_id ?? "?"}</div>
+        <div class="title">Przebieg kursu ${extractNumber(row.trip_id, "trip", row.mode)} · linia ${row.route_short_name ?? row.route_id ?? "?"}</div>
         <div class="sub">${row.relation ?? ""} · pojazd ${fullVehicleNumber(row)}</div>
       </div>
       <div id="brigadeListArea">${renderBrigadeListHtml()}</div>
@@ -720,7 +728,7 @@ function renderDetailContent(row, signals) {
   const segments = buildSegments(signals);
   let html = `<div class="detail-wrap">
     <div class="detail-header">
-      <div class="title">Przebieg kursu ${extractNumber(row.trip_id, "trip")} · linia ${row.route_short_name ?? row.route_id ?? "?"} · brygada ${row.brigade_label ?? extractNumber(row.block_id, "block")}</div>
+      <div class="title">Przebieg kursu ${extractNumber(row.trip_id, "trip", row.mode)} · linia ${row.route_short_name ?? row.route_id ?? "?"} · brygada ${row.brigade_label ?? extractNumber(row.block_id, "block")}</div>
       <div class="sub">${row.relation ?? ""} · pojazd ${fullVehicleNumber(row)}${row.vehicle_type ? " (" + row.vehicle_type + ")" : ""}</div>
     </div>
     <div id="brigadeListArea">${renderBrigadeListHtml()}</div>
