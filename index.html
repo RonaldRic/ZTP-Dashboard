@@ -521,21 +521,65 @@ const VEHICLE_PREFIX_BY_DEPOT_TYPE = {
   "Mobilis|Scania Castrosua New City 10 CNG": "MS",
   "Mobilis|Scania Castrosua New City 12 CNG": "MS",
   "Mobilis|MAN Lion's City 18 CNG": "MM",
+  // MPK autobusy (Bienczyce/Plaszow/Wola Duchacka) - potwierdzone zrodlowo
+  // na psmkms.krakow.pl (stan 18.07.2026 Bienczyce/Plaszow, 27.06.2026
+  // Wola Duchacka). Potrzebne dla ok. 80% floty MPK, gdzie feed (ustalone
+  // empirycznie 17.08.2026) podaje TYLKO gola liczbe bez liter - dla
+  // pozostalych ~20%, ktore juz maja gotowy kod, fullVehicleNumber()
+  // wyzej wykrywa litery w vehicle_id i w ogole nie siega do tej tabeli.
+  "Bieńczyce|Autosan M09LE": "BA",
+  "Bieńczyce|Solaris Urbino 8,9LE": "BA",
+  "Bieńczyce|Mercedes O530 C2": "BO",
+  "Bieńczyce|Solaris Urbino 12 IV": "BU",
+  "Bieńczyce|Solaris Urbino 18": "BR",
+  "Bieńczyce|Solaris Urbino 18 IV": "BR",
+  "Bieńczyce|Solaris Urbino 18 hybrid": "BH",
+  "Bieńczyce|Volvo 7900A Hybrid": "BH",
+  "Płaszów|Solaris Urbino 12 III": "PU",
+  "Płaszów|Solaris Urbino 12 IV": "PU",
+  "Płaszów|Mercedes O530 C2": "PO",
+  "Płaszów|NesoBus 12": "PW",
+  "Płaszów|Solaris Urbino 18 III": "PR",
+  "Płaszów|Solaris Urbino 18 MetroStyle": "PR",
+  "Płaszów|Solaris Urbino 18 IV": "PR",
+  "Płaszów|Automet Cityliner Smile": "PA",
+  "Płaszów|Mercedes-Benz City 75": "PA",
+  "Płaszów|Karsan Jest": "PA",
+  "Wola Duchacka|Autosan M09LE": "DA",
+  "Wola Duchacka|Solaris Urbino 10,5 IV": "DA",
+  "Wola Duchacka|Mercedes Conecto": "DO",
+  "Wola Duchacka|Solaris Urbino 12,9 hybrid": "DH",
+  "Wola Duchacka|Solaris Urbino 12 IV": "DU",
+  "Wola Duchacka|Mercedes O530G": "DC",
+  "Wola Duchacka|Mercedes Conecto G": "DC",
+  "Wola Duchacka|Solaris Urbino 18 III": "DR",
+  "Wola Duchacka|Solaris Urbino 18 IV": "DR",
+  "Wola Duchacka|Solaris Urbino 8,9LE electric": "DE",
+  "Wola Duchacka|Solaris Urbino 12 III electric": "DE",
+  "Wola Duchacka|Solaris Urbino 12 IV electric": "DE",
+  "Wola Duchacka|Irizar ie bus 12": "DE",
+  "Wola Duchacka|Solaris Urbino 18 III electric": "DN",
+  "Wola Duchacka|Solaris Urbino 18 IV electric": "DN",
 };
 
 function fullVehicleNumber(row) {
   if (row.vehicle_id === null || row.vehicle_id === undefined) return "—";
+  const idStr = String(row.vehicle_id);
+  // Jesli vehicle_id JUZ zawiera litery - to juz jest gotowy, pelny kod
+  // wprost z feedu (typowe dla ~18% floty MPK, zawsze dla wiekszosci
+  // proby MPK z 17.08.2026 co do ktorej mamy pelny kod). NIE doklejamy
+  // wtedy niczego z powrotem - inaczej powstalby podwojny prefiks, np.
+  // "BU" + "BU356" = "BUBU356".
+  if (/[A-Za-z]/.test(idStr)) return idStr;
+
   const key = `${row.vehicle_depot}|${row.vehicle_type}`;
   const prefix = VEHICLE_PREFIX_BY_DEPOT_TYPE[key];
-  // Dopelnianie zerami do 3 cyfr (np. "82" -> "082") ma sens TYLKO dla
-  // tramwajow, gdzie wszystkie numery taborowe faktycznie sa 3-cyfrowe.
-  // Autobusy (zwlaszcza Mobilis, ktory przychodzi jako goly numer bez
-  // liter) moga miec numery krotsze - dopelnianie zerem tworzyloby numer,
-  // ktorego pojazd fizycznie nie nosi. Bez pewnego (tramwajowego)
-  // dopasowania pokazujemy wiec numer DOKLADNIE tak, jak przyszedl z
-  // feedu (dla MPK to juz gotowy kod jak "PU377", bez zadnej zmiany).
-  if (!prefix) return String(row.vehicle_id);
-  const numStr = String(row.vehicle_id).padStart(3, "0");
+  // Dopelnianie zerami do 3 cyfr (np. "82" -> "082") ma sens TYLKO gdy
+  // faktycznie odtwarzamy prefiks (tramwaje, Mobilis, wiekszosc MPK bez
+  // liter w feedzie) - bez pewnego dopasowania pokazujemy numer
+  // DOKLADNIE tak, jak przyszedl z feedu, bez zgadywania.
+  if (!prefix) return idStr;
+  const numStr = idStr.padStart(3, "0");
   return `${prefix}${numStr}`;
 }
 
