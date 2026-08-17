@@ -86,6 +86,18 @@
   .summary-card .value { font-size: 22px; font-weight: 700; margin-top: 4px; }
   .summary-card .sub { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
   .offline-brigades { margin: 0 20px 16px 20px; }
+  .service-alerts { margin: 12px 20px 0 20px; display: flex; flex-direction: column; gap: 8px; }
+  .service-alert {
+    display: flex; gap: 10px; align-items: flex-start; padding: 10px 14px;
+    background: var(--panel); border: 1px solid var(--warn); border-left: 4px solid var(--warn);
+    border-radius: 8px;
+  }
+  .service-alert-mode {
+    flex-shrink: 0; font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.04em; color: var(--warn); padding-top: 2px;
+  }
+  .service-alert-header { font-size: 13px; font-weight: 600; color: var(--text); }
+  .service-alert-desc { font-size: 13px; color: var(--text-dim); margin-top: 2px; }
   .offline-brigades summary {
     cursor: pointer; font-size: 13px; color: var(--bad); font-weight: 600;
     padding: 8px 12px; background: var(--panel); border: 1px solid var(--panel-border);
@@ -183,6 +195,8 @@
     <button id="themeToggleBtn" title="Przełącz tryb jasny/ciemny">☀️ Tryb jasny</button>
   </div>
 </header>
+
+<div id="serviceAlertsContainer"></div>
 
 <div class="tabs">
   <button class="tab-btn active" data-tab="live">Aktualne kursy</button>
@@ -416,6 +430,49 @@ function renderOfflineBrigades(list) {
         <tbody>${rows}</tbody>
       </table>
     </details>`;
+}
+
+const MODE_LABELS_ALERT = { tram: "Tramwaje", bus_mpk: "Autobusy MPK", bus_mobilis: "Autobusy Mobilis" };
+
+// Tresc komunikatow pochodzi z zewnetrznego feedu ZTP (wolny tekst
+// wpisywany recznie przez operatora) - w odroznieniu od reszty danych na
+// dashboardzie (ktore pochodza z ustrukturyzowanego GTFS), tego nie
+// mozemy zalozyc jako bezpieczne do wstrzykniecia wprost przez innerHTML.
+function escapeHtml(str) {
+  if (str === null || str === undefined) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function renderServiceAlerts(alerts) {
+  const container = document.getElementById("serviceAlertsContainer");
+  if (!alerts || alerts.length === 0) {
+    container.innerHTML = "";
+    return;
+  }
+  const items = alerts.map((a) => `
+    <div class="service-alert">
+      <span class="service-alert-mode">${escapeHtml(MODE_LABELS_ALERT[a.mode] ?? a.mode)}</span>
+      <div>
+        <div class="service-alert-header">${escapeHtml(a.header ?? "Komunikat")}</div>
+        ${a.description ? `<div class="service-alert-desc">${escapeHtml(a.description)}</div>` : ""}
+      </div>
+    </div>
+  `).join("");
+  container.innerHTML = `<div class="service-alerts">${items}</div>`;
+}
+
+async function loadServiceAlerts() {
+  try {
+    const data = await apiGet("/api/service_alerts");
+    renderServiceAlerts(data.alerts);
+  } catch (e) {
+    console.error("Błąd ładowania komunikatów operatora:", e);
+  }
 }
 
 async function loadHistorySummary() {
@@ -1048,7 +1105,7 @@ async function loadTable(isBackgroundRefresh) {
 }
 
 async function refreshAll(isBackgroundRefresh) {
-  await Promise.all([loadSummary(), loadRoutes()]);
+  await Promise.all([loadSummary(), loadRoutes(), loadServiceAlerts()]);
   await loadTable(isBackgroundRefresh);
 }
 
