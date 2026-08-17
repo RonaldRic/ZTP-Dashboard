@@ -511,17 +511,32 @@ const VEHICLE_PREFIX_BY_DEPOT_TYPE = {
   "Nowa Huta|Tango Lajkonik II": "HY",
   "Nowa Huta|405N-Kr": "HG",
   "Nowa Huta|2014N (Krakowiak)": "HG",
+  // Mobilis (zajezdnia Makuszynskiego) - potwierdzone zrodlowo na
+  // psmkms.krakow.pl, stan 30.08.2025. Backend (vehicle_fleet.py) juz
+  // rozstrzyga to po stronie API na podstawie mode='bus_mobilis' - tutaj
+  // klucz jest wiec bezpieczny nawet gdyby numer przypadkiem pokrywal sie
+  // z zakresem tramwajowym (np. 819 = i tramwaj NGT8, i autobus MAN).
+  "Mobilis|Iveco Urby LE (spalinowy)": "MB",
+  "Mobilis|Iveco Urby LE (elektryczny)": "MB",
+  "Mobilis|Scania Castrosua New City 10 CNG": "MS",
+  "Mobilis|Scania Castrosua New City 12 CNG": "MS",
+  "Mobilis|MAN Lion's City 18 CNG": "MM",
 };
 
 function fullVehicleNumber(row) {
   if (row.vehicle_id === null || row.vehicle_id === undefined) return "—";
   const key = `${row.vehicle_depot}|${row.vehicle_type}`;
   const prefix = VEHICLE_PREFIX_BY_DEPOT_TYPE[key];
+  // Dopelnianie zerami do 3 cyfr (np. "82" -> "082") ma sens TYLKO dla
+  // tramwajow, gdzie wszystkie numery taborowe faktycznie sa 3-cyfrowe.
+  // Autobusy (zwlaszcza Mobilis, ktory przychodzi jako goly numer bez
+  // liter) moga miec numery krotsze - dopelnianie zerem tworzyloby numer,
+  // ktorego pojazd fizycznie nie nosi. Bez pewnego (tramwajowego)
+  // dopasowania pokazujemy wiec numer DOKLADNIE tak, jak przyszedl z
+  // feedu (dla MPK to juz gotowy kod jak "PU377", bez zadnej zmiany).
+  if (!prefix) return String(row.vehicle_id);
   const numStr = String(row.vehicle_id).padStart(3, "0");
-  // Bez znanego typu+zajezdni (numer spoza vehicle_fleet.py, albo nowy
-  // typ ktorego jeszcze nie ma w tabeli powyzej) pokazujemy sama liczbe,
-  // zeby nie zgadywac/nie pokazac falszywego prefiksu.
-  return prefix ? `${prefix}${numStr}` : numStr;
+  return `${prefix}${numStr}`;
 }
 
 function vehicleCell(row) {
