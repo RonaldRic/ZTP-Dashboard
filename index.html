@@ -215,6 +215,7 @@
     <option value="tram">Tramwaje</option>
     <option value="bus_mpk">Autobusy MPK</option>
     <option value="bus_mobilis">Autobusy Mobilis</option>
+    <option value="__offline__">Tylko niezalogowane (wszystkie tryby)</option>
   </select>
   <select id="routeFilter">
     <option value="">Wszystkie linie</option>
@@ -665,7 +666,7 @@ function renderRowCells(row, columns) {
       html += `<td class="${col.cls}">${row.route_short_name ?? row.route_id ?? "—"}</td>`;
     } else if (col.key === "vehicle_id") {
       if (row.isOfflinePlaceholder) {
-        html += `<td class="${col.cls}" title="Brak wagonu/pojazdu - brygada powinna teraz kursować">!</td>`;
+        html += `<td class="${col.cls}" style="text-align: center; font-weight: 700;" title="Brak wagonu/pojazdu - brygada powinna teraz kursować">!</td>`;
       } else {
         html += vehicleCell(row).replace("<td", `<td class="${col.cls}"`);
       }
@@ -1067,7 +1068,7 @@ function getSortValue(row, key) {
     return Number.isNaN(n) ? v : n;
   }
   if (key === "block_id") {
-    return brigadeSortKey(row.brigade_label);
+    return brigadeSortKey(row.brigade_label ?? row.block_id);
   }
   return row[key];
 }
@@ -1097,7 +1098,11 @@ function offlineBrigadeToRow(b) {
 function sortAndRenderLive() {
   let rows = [...state.liveRowsCache, ...state.offlineBrigades.map(offlineBrigadeToRow)];
   if (state.route) rows = rows.filter((r) => r.route_id === state.route);
-  if (state.mode) rows = rows.filter((r) => r.mode === state.mode);
+  if (state.mode === "__offline__") {
+    rows = rows.filter((r) => r.isOfflinePlaceholder);
+  } else if (state.mode) {
+    rows = rows.filter((r) => r.mode === state.mode);
+  }
   const { sort, order } = effectiveSort();
   rows.sort((a, b) => {
     const av = getSortValue(a, sort);
@@ -1157,6 +1162,13 @@ document.querySelectorAll(".tab-btn").forEach((btn) => {
     btn.classList.add("active");
     state.tab = btn.dataset.tab;
     state.offset = 0;
+    // "Tylko niezalogowane" nie ma odpowiednika w Historii (to pojecie
+    // dotyczy tylko biezacego stanu na zywo) - resetujemy, zeby dropdown
+    // nie zostawal wybrany na czyms co po cichu nic nie robi.
+    if (state.tab === "history" && state.mode === "__offline__") {
+      state.mode = "";
+      document.getElementById("modeFilter").value = "";
+    }
     if (state.apiBase) {
       loadSummary();
       loadTable();
