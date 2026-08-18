@@ -85,7 +85,6 @@
   .summary-card .label { font-size: 12px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; }
   .summary-card .value { font-size: 22px; font-weight: 700; margin-top: 4px; }
   .summary-card .sub { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
-  .offline-brigades { margin: 0 20px 16px 20px; }
   .service-alerts { margin: 12px 20px 0 20px; display: flex; flex-direction: column; gap: 8px; }
   .service-alert {
     display: flex; gap: 10px; align-items: flex-start; padding: 10px 14px;
@@ -98,21 +97,14 @@
   }
   .service-alert-header { font-size: 13px; font-weight: 600; color: var(--text); }
   .service-alert-desc { font-size: 13px; color: var(--text-dim); margin-top: 2px; }
-  .offline-brigades summary {
-    cursor: pointer; font-size: 13px; color: var(--bad); font-weight: 600;
-    padding: 8px 12px; background: var(--panel); border: 1px solid var(--panel-border);
-    border-radius: 8px; list-style: none;
-  }
-  .offline-brigades summary::-webkit-details-marker { display: none; }
-  .offline-brigades summary::before { content: "▸ "; }
-  .offline-brigades[open] summary::before { content: "▾ "; }
-  .offline-brigades table {
-    width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 13px;
-    background: var(--panel); border: 1px solid var(--panel-border); border-radius: 8px; overflow: hidden;
-  }
-  .offline-brigades th, .offline-brigades td { padding: 6px 12px; text-align: left; border-bottom: 1px solid var(--panel-border); }
-  .offline-brigades th { color: var(--text-dim); font-weight: 600; font-size: 12px; text-transform: uppercase; }
-  .offline-brigades tr:last-child td { border-bottom: none; }
+  /* Brygady bez widocznego pojazdu, scalone bezposrednio do glownej
+     tabeli (17.08.2026, wczesniej osobny <details> box) - caly wiersz na
+     czerwono zamiast osobnej kolumny/kropki, plus "!" w kolumnie Pojazd
+     (patrz renderRowCells). tr.data-row zachowuje hover/klikalnosc na
+     poziomie CSS, ale JS wylacza faktyczne rozwijanie dla tych wierszy -
+     nie ma przebiegu kursu do pokazania (nie ma trip_id). */
+  tr.offline-row td { color: var(--bad); }
+  tr.offline-row:hover td { background: var(--row-hover); }
   .controls { padding: 0 20px 12px 20px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
   select, input[type="text"] {
     background: var(--panel); border: 1px solid var(--panel-border); color: var(--text);
@@ -200,15 +192,14 @@
 
 <div class="tabs">
   <button class="tab-btn active" data-tab="live">Aktualne kursy</button>
-  <!-- Miejsce na przyszle podkategorie TRAM / BUS MPK / BUS Mobilis
-       (dla obu zakladek) trafi tutaj, posrodku, gdy dojdzie obsluga
-       autobusow - stad Aktualne kursy i Historia sa celowo rozsuniete
-       na przeciwlegle konce paska zakladek. -->
+  <!-- Rozwazano tu kiedys podzakladki TRAM/BUS MPK/BUS Mobilis, ale
+       17.08.2026 zdecydowano isc w filtr trybu (patrz #modeFilter w
+       .controls) zamiast osobnych zakladek - prosciej i nie mnozy stanu
+       (paginacja/sortowanie) per tryb x zakladka. -->
   <button class="tab-btn" data-tab="history">Historia</button>
 </div>
 
 <div id="summaryRow" class="summary-row"></div>
-<div id="offlineBrigadesContainer"></div>
 
 <div class="controls">
   <select id="statusFilter">
@@ -219,6 +210,12 @@
     <option value="odwolany">odwołany</option>
   </select>
   <input type="date" id="dateFilter" style="display:none;">
+  <select id="modeFilter">
+    <option value="">Wszystkie tryby</option>
+    <option value="tram">Tramwaje</option>
+    <option value="bus_mpk">Autobusy MPK</option>
+    <option value="bus_mobilis">Autobusy Mobilis</option>
+  </select>
   <select id="routeFilter">
     <option value="">Wszystkie linie</option>
   </select>
@@ -285,13 +282,16 @@ let state = {
   tab: "live",
   sort: "last_seen_at",
   order: "desc",
+  userSorted: false, // false = "Live" pokazuje domyslny sort po brygadzie (patrz effectiveSort); true = uzytkownik jawnie kliknal naglowek
   status: "",
   route: "",
+  mode: "", // "", "tram", "bus_mpk", "bus_mobilis" - filtr trybu
   selectedDate: "", // filtr daty w Historii, format YYYY-MM-DD (puste = wszystkie dni)
   limit: 50,
   offset: 0,
   total: 0,
   liveRowsCache: [],
+  offlineBrigades: [], // z /api/today_summary - doklejane jako syntetyczne wiersze w sortAndRenderLive
   expandedKey: null,      // trip_id+start_date aktualnie rozwinietego wiersza
   expandedSignals: null,  // zaladowane sygnaly dla rozwinietego wiersza
   expandedTickKey: null,  // ktory segment (stop_sequence) ma rozwiniete surowe ticki
@@ -300,6 +300,7 @@ let state = {
 };
 
 function rowKey(row) {
+  if (row.isOfflinePlaceholder) return `offline__${row.mode}__${row.block_id}`;
   return `${row.trip_id}__${row.start_date ?? ""}`;
 }
 
@@ -404,34 +405,6 @@ function renderSummaryCards(cards) {
   }
 }
 
-function renderOfflineBrigades(list) {
-  const container = document.getElementById("offlineBrigadesContainer");
-  if (!list || list.length === 0) {
-    container.innerHTML = "";
-    return;
-  }
-  const rows = list.map((b) => {
-    const window = (b.scheduled_start && b.scheduled_end) ? `${b.scheduled_start}–${b.scheduled_end}` : "—";
-    const lastSeen = b.last_seen_at !== null && b.last_seen_at !== undefined
-      ? fmtTime(b.last_seen_at)
-      : "brak sygnału dzisiaj";
-    return `<tr>
-      <td>${b.brigade_label || b.block_id}</td>
-      <td>${b.route_short_name ?? "—"}</td>
-      <td>${window}</td>
-      <td>${lastSeen}</td>
-    </tr>`;
-  }).join("");
-  container.innerHTML = `
-    <details class="offline-brigades">
-      <summary>Brygady bez widocznego pojazdu (${list.length}) - powinny teraz kursować, ale nie wysyłają sygnału</summary>
-      <table>
-        <thead><tr><th>Brygada</th><th>Linia</th><th>Rozkładowe okno</th><th>Ostatni sygnał</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </details>`;
-}
-
 const MODE_LABELS_ALERT = { tram: "Tramwaje", bus_mpk: "Autobusy MPK", bus_mobilis: "Autobusy Mobilis" };
 
 // Tresc komunikatow pochodzi z zewnetrznego feedu ZTP (wolny tekst
@@ -494,7 +467,7 @@ async function loadHistorySummary() {
       });
     }
     renderSummaryCards(cards);
-    document.getElementById("offlineBrigadesContainer").innerHTML = "";
+    state.offlineBrigades = [];
   } catch (e) {
     console.error("Błąd ładowania podsumowania:", e);
   }
@@ -511,7 +484,12 @@ async function loadTodaySummary() {
       { label: "Kursy zakończone w całości (dziś)", value: data.finished_full, sub: "" },
       { label: "Kursy częściowo zakończone (dziś)", value: data.finished_partial, sub: "brak danych / zawrócony / zjazd awaryjny" },
     ]);
-    renderOfflineBrigades(data.offline_brigades);
+    // Brygady offline juz NIE renderujemy w osobnym boxie - trafiaja jako
+    // syntetyczne wiersze do glownej tabeli (patrz sortAndRenderLive).
+    // Zapamietujemy tu, doklejamy tam - loadSummary() konczy sie PRZED
+    // loadTable() w refreshAll(), wiec przy odswiezaniu ta lista jest juz
+    // aktualna zanim tabela sie przerysuje.
+    state.offlineBrigades = data.offline_brigades || [];
   } catch (e) {
     console.error("Błąd ładowania podsumowania dnia:", e);
   }
@@ -543,9 +521,29 @@ async function loadRoutes() {
   }
 }
 
+// Domyslne sortowanie ROZNI SIE per zakladka: Live domyslnie po brygadzie
+// (numerycznie, "52-01" przed "74-01") - bez tego kolejnosc live byla
+// faktycznie po last_seen_at, co dla tramwajow WYGLADALO na posortowane
+// po brygadzie (mniej kursow, mniej remisow), ale dla autobusow (duzo
+// wiecej remisow w tej samej sekundzie) wygladalo na chaotyczne. Historia
+// zostaje przy dotychczasowym "najnowsze na gorze". state.userSorted
+// odroznia "jeszcze nikt nie kliknal naglowka" (uzyj domyslnego dla danej
+// zakladki) od "uzytkownik wybral sortowanie" (uzyj state.sort/order
+// wprost, tak jak dotychczas, dzielone miedzy zakladkami).
+const DEFAULT_LIVE_SORT = "block_id";
+const DEFAULT_LIVE_ORDER = "asc";
+
+function effectiveSort() {
+  if (!state.userSorted && state.tab === "live") {
+    return { sort: DEFAULT_LIVE_SORT, order: DEFAULT_LIVE_ORDER };
+  }
+  return { sort: state.sort, order: state.order };
+}
+
 function renderArrow(key) {
-  if (state.sort !== key) return "";
-  return state.order === "asc" ? '<span class="arrow">▲</span>' : '<span class="arrow">▼</span>';
+  const { sort, order } = effectiveSort();
+  if (sort !== key) return "";
+  return order === "asc" ? '<span class="arrow">▲</span>' : '<span class="arrow">▼</span>';
 }
 
 // Pelny 5-znakowy numer taborowy MPK Krakow - potwierdzone zrodlowo na
@@ -666,7 +664,11 @@ function renderRowCells(row, columns) {
     } else if (col.key === "route_id") {
       html += `<td class="${col.cls}">${row.route_short_name ?? row.route_id ?? "—"}</td>`;
     } else if (col.key === "vehicle_id") {
-      html += vehicleCell(row).replace("<td", `<td class="${col.cls}"`);
+      if (row.isOfflinePlaceholder) {
+        html += `<td class="${col.cls}" title="Brak wagonu/pojazdu - brygada powinna teraz kursować">!</td>`;
+      } else {
+        html += vehicleCell(row).replace("<td", `<td class="${col.cls}"`);
+      }
     } else if (col.key === "relation") {
       html += `<td class="${col.cls} relation-text">${row.relation ?? "—"}</td>`;
     } else if (col.key === "status") {
@@ -967,7 +969,8 @@ function renderTable(rows, columns) {
   }
   html += "</tr></thead><tbody>";
   rows.forEach((row, idx) => {
-    html += `<tr class="data-row" data-idx="${idx}" data-key="${rowKey(row)}">`;
+    const rowCls = row.isOfflinePlaceholder ? "data-row offline-row" : "data-row";
+    html += `<tr class="${rowCls}" data-idx="${idx}" data-key="${rowKey(row)}">`;
     html += renderRowCells(row, columns);
     html += "</tr>";
   });
@@ -979,12 +982,15 @@ function renderTable(rows, columns) {
   container.querySelectorAll("th").forEach((th) => {
     th.addEventListener("click", () => {
       const key = th.dataset.key;
-      if (state.sort === key) {
-        state.order = state.order === "asc" ? "desc" : "asc";
+      const current = effectiveSort();
+      if (current.sort === key) {
+        state.sort = key;
+        state.order = current.order === "asc" ? "desc" : "asc";
       } else {
         state.sort = key;
         state.order = "desc";
       }
+      state.userSorted = true;
       state.offset = 0;
       if (state.tab === "history") {
         loadHistoryTable();
@@ -998,6 +1004,10 @@ function renderTable(rows, columns) {
     tr.addEventListener("click", () => {
       const idx = parseInt(tr.dataset.idx, 10);
       const row = rows[idx];
+      // Brygada bez widocznego pojazdu nie ma trip_id - nie ma przebiegu
+      // kursu do pokazania, wiec klikniecie jest tu celowo no-opem zamiast
+      // odpytywania /api/trip_detail o cos, co nie istnieje.
+      if (row.isOfflinePlaceholder) return;
       toggleTripDetail(row, columnCount);
     });
   });
@@ -1017,6 +1027,7 @@ async function loadHistoryTable(isBackgroundRefresh) {
     });
     if (state.status) params.set("status", state.status);
     if (state.route) params.set("route_id", state.route);
+    if (state.mode) params.set("mode", state.mode);
     if (state.selectedDate) params.set("start_date", state.selectedDate);
 
     const data = await apiGet(`/api/trip_history?${params.toString()}`);
@@ -1061,16 +1072,40 @@ function getSortValue(row, key) {
   return row[key];
 }
 
+function offlineBrigadeToRow(b) {
+  // Syntetyczny "wiersz" dla brygady bez widocznego pojazdu - te same
+  // klucze co prawdziwy wiersz z /api/open_trips tam gdzie ma to sens
+  // (mode, route_id, route_short_name, relation, scheduled_start/end),
+  // reszta (trip_id, vehicle_id, opoznienia, nazwa przystanku) po prostu
+  // brakuje - renderRowCells i tak radzi sobie z brakami przez "—", poza
+  // dwoma jawnymi wyjatkami (Pojazd -> "!", Status -> "—" bez pigulki),
+  // patrz isOfflinePlaceholder tam.
+  return {
+    isOfflinePlaceholder: true,
+    mode: b.mode,
+    block_id: b.block_id,
+    brigade_label: b.brigade_label,
+    route_id: b.route_id,
+    route_short_name: b.route_short_name,
+    relation: b.relation,
+    scheduled_start: b.scheduled_start,
+    scheduled_end: b.scheduled_end,
+    last_seen_at: b.last_seen_at,
+  };
+}
+
 function sortAndRenderLive() {
-  let rows = [...state.liveRowsCache];
+  let rows = [...state.liveRowsCache, ...state.offlineBrigades.map(offlineBrigadeToRow)];
   if (state.route) rows = rows.filter((r) => r.route_id === state.route);
+  if (state.mode) rows = rows.filter((r) => r.mode === state.mode);
+  const { sort, order } = effectiveSort();
   rows.sort((a, b) => {
-    const av = getSortValue(a, state.sort);
-    const bv = getSortValue(b, state.sort);
+    const av = getSortValue(a, sort);
+    const bv = getSortValue(b, sort);
     if (av === null || av === undefined) return 1;
     if (bv === null || bv === undefined) return -1;
-    if (av < bv) return state.order === "asc" ? -1 : 1;
-    if (av > bv) return state.order === "asc" ? 1 : -1;
+    if (av < bv) return order === "asc" ? -1 : 1;
+    if (av > bv) return order === "asc" ? 1 : -1;
     return 0;
   });
   renderTable(rows, LIVE_COLUMNS);
@@ -1144,6 +1179,12 @@ document.getElementById("dateFilter").addEventListener("change", (e) => {
 
 document.getElementById("routeFilter").addEventListener("change", (e) => {
   state.route = e.target.value;
+  state.offset = 0;
+  loadTable();
+});
+
+document.getElementById("modeFilter").addEventListener("change", (e) => {
+  state.mode = e.target.value;
   state.offset = 0;
   loadTable();
 });
