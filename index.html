@@ -475,25 +475,19 @@ async function loadHistorySummary() {
 }
 
 async function loadTodaySummary() {
-  try {
-    const data = await apiGet("/api/today_summary");
-    renderSummaryCards([
-      { label: "Kursy zaplanowane na dzisiaj", value: data.planned_today, sub: "" },
-      { label: "Kursy ON-line", value: data.online, sub: "aktualnie zalogowane brygady" },
-      { label: "Kursy OFF-line", value: data.offline, sub: "aktualnie niezalogowane brygady" },
-      { label: "Kursy pozostałe do wykonania (dziś)", value: data.remaining, sub: "" },
-      { label: "Kursy zakończone w całości (dziś)", value: data.finished_full, sub: "" },
-      { label: "Kursy częściowo zakończone (dziś)", value: data.finished_partial, sub: "brak danych / zawrócony / zjazd awaryjny" },
-    ]);
-    // Brygady offline juz NIE renderujemy w osobnym boxie - trafiaja jako
-    // syntetyczne wiersze do glownej tabeli (patrz sortAndRenderLive).
-    // Zapamietujemy tu, doklejamy tam - loadSummary() konczy sie PRZED
-    // loadTable() w refreshAll(), wiec przy odswiezaniu ta lista jest juz
-    // aktualna zanim tabela sie przerysuje.
-    state.offlineBrigades = data.offline_brigades || [];
-  } catch (e) {
-    console.error("Błąd ładowania podsumowania dnia:", e);
-  }
+  // TYMCZASOWO WYLACZONE (18/19.08.2026) - /api/today_summary wisza na
+  // serwerze (e2-micro, przeciazenie pamieciowe/WAL) mimo poprawki w
+  // api.py, ktora miala to naprawic - jeszcze nie zdiagnozowane do konca.
+  // Przegladarka NIE ODPYTUJE juz tego endpointu wcale, zeby nie dokladac
+  // kolejnych wiszacych requestow do i tak niestabilnego serwera. Karty
+  // podsumowania i syntetyczne wiersze "brak pojazdu" w tabeli (ktore
+  // czerpaly dane z tego endpointu) sa przez to puste/nieobecne - to
+  // oczekiwany, tymczasowy skutek uboczny. Pelna, dzialajaca wersja tej
+  // funkcji (fetch + renderSummaryCards + state.offlineBrigades) jest w
+  // historii git tego pliku - przywrocic ja, kiedy endpoint faktycznie
+  // odpowiada szybko na serwerze.
+  document.getElementById("summaryRow").style.display = "none";
+  state.offlineBrigades = [];
 }
 
 async function loadSummary() {
