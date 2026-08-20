@@ -475,19 +475,22 @@ async function loadHistorySummary() {
 }
 
 async function loadTodaySummary() {
-  // TYMCZASOWO WYLACZONE (18/19.08.2026) - /api/today_summary wisza na
-  // serwerze (e2-micro, przeciazenie pamieciowe/WAL) mimo poprawki w
-  // api.py, ktora miala to naprawic - jeszcze nie zdiagnozowane do konca.
-  // Przegladarka NIE ODPYTUJE juz tego endpointu wcale, zeby nie dokladac
-  // kolejnych wiszacych requestow do i tak niestabilnego serwera. Karty
-  // podsumowania i syntetyczne wiersze "brak pojazdu" w tabeli (ktore
-  // czerpaly dane z tego endpointu) sa przez to puste/nieobecne - to
-  // oczekiwany, tymczasowy skutek uboczny. Pelna, dzialajaca wersja tej
-  // funkcji (fetch + renderSummaryCards + state.offlineBrigades) jest w
-  // historii git tego pliku - przywrocic ja, kiedy endpoint faktycznie
-  // odpowiada szybko na serwerze.
+  // PRZYWROCONE 20.08.2026 - wczesniej (18/19.08.2026) endpoint wisial na
+  // serwerze przez dwa niezalezne bledy pamieciowe po stronie backendu
+  // (patrz api.py/main.py/trip_tracker.py), oba juz naprawione i
+  // potwierdzone stabilne. Zasilamy TYLKO state.offlineBrigades (syntetyczne
+  // wiersze "brak pojazdu" wklejane do glownej tabeli w sortAndRenderLive) -
+  // karty podsumowania na gorze strony (summaryRow) zostaja NADAL ukryte,
+  // do czasu az ustalimy wlasciwy podzial/schemat licznikow (celowa decyzja
+  // 20.08.2026, nie przeoczenie).
   document.getElementById("summaryRow").style.display = "none";
-  state.offlineBrigades = [];
+  try {
+    const data = await apiGet("/api/today_summary");
+    state.offlineBrigades = data.offline_brigades ?? [];
+  } catch (e) {
+    console.error("Błąd ładowania nieobsadzonych brygad:", e);
+    state.offlineBrigades = [];
+  }
 }
 
 async function loadSummary() {
