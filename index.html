@@ -279,16 +279,23 @@ const LIVE_COLUMNS = [
   { key: "last_seen_at", label: "Ostatni sygnał", cls: "col-medium" },
 ];
 
-// Zagregowany raport z /api/unstaffed_trips_report (grupowanie dzien+tryb+
-// linia) - wiersze to LICZBY niewykonanych kursow, nie pojedyncze kursy,
-// wiec nie ma tu "Kliknij wiersz zeby zobaczyc przebieg" (brak trip_id per
-// wiersz) ani standardowej paginacji (liczba kombinacji dzien x linia jest
-// mala, cala tabela miesci sie na raz).
-const UNSTAFFED_REPORT_COLUMNS = [
-  { key: "service_date_fmt", label: "Data", cls: "col-narrow" },
-  { key: "mode_label", label: "Tryb", cls: "col-narrow" },
-  { key: "route_short_name", label: "Linia", cls: "col-narrow" },
-  { key: "unstaffed_count", label: "Niewykonane kursy", cls: "col-medium" },
+// Zagregowany raport z /api/unstaffed_trips_report. Dwa poziomy:
+// - UNSTAFFED_DAY_COLUMNS: widoczne, gdy nie ma filtra daty (przegladamy
+//   wiele dni na raz) - kazdy dzien to jeden zwijany wiersz z suma, zeby
+//   lista nie robila sie nieczytelna w miare narastania historii.
+// - UNSTAFFED_ROUTE_COLUMNS: rozbicie tryb+linia+liczba w obrebie JEDNEGO,
+//   juz ustalonego dnia (albo bo user wybral konkretna date filtrem, albo
+//   bo rozwinal dany dzien w widoku wielu dni) - stad brak kolumny "Data"
+//   tutaj, bo w tym kontekscie jest juz zawsze jedna, znana wartosc.
+const UNSTAFFED_DAY_COLUMNS = [
+  { key: "service_date_fmt", label: "Data", cls: "col-narrow", sortKey: "service_date" },
+  { key: "day_total", label: "Niewykonane kursy (łącznie)", cls: "col-medium", sortKey: "day_total" },
+];
+
+const UNSTAFFED_ROUTE_COLUMNS = [
+  { key: "mode_label", label: "Tryb", cls: "col-narrow", sortKey: "mode_label" },
+  { key: "route_short_name", label: "Linia", cls: "col-narrow", sortKey: "route_short_name" },
+  { key: "unstaffed_count", label: "Niewykonane kursy", cls: "col-medium", sortKey: "unstaffed_count" },
 ];
 
 let state = {
@@ -309,6 +316,9 @@ let state = {
   unstaffedReportRows: [], // zagregowane wiersze raportu (zakladka "Niewykonane kursy")
   unstaffedExpandedKey: null, // klucz aktualnie rozwinietej grupy (dzien|tryb|linia) w raporcie, lub null
   unstaffedExpandedRows: null, // zaladowane pojedyncze kursy dla rozwinietej grupy (null = w trakcie ladowania)
+  unstaffedSort: null, // "service_date" | "day_total" | "mode_label" | "route_short_name" | "unstaffed_count" | null = domyslny
+  unstaffedOrder: "desc",
+  unstaffedExpandedDays: null, // Set() dni rozwinietych w widoku "wszystkie dni" - null = jeszcze nie zainicjalizowany (patrz loadUnstaffedTable)
   expandedKey: null,      // trip_id+start_date aktualnie rozwinietego wiersza
   expandedSignals: null,  // zaladowane sygnaly dla rozwinietego wiersza
   expandedTickKey: null,  // ktory segment (stop_sequence) ma rozwiniete surowe ticki
@@ -1179,17 +1189,18 @@ async function loadUnstaffedTable(isBackgroundRefresh) {
       service_date_fmt: fmtServiceDate(r.service_date),
       mode_label: MODE_LABELS_ALERT[r.mode] ?? r.mode,
     }));
-    // Najnowszy dzien najpierw, w obrebie dnia - najwiecej niewykonanych
-    // kursow najpierw (to zwykle to, co chce sie zobaczyc od razu).
-    rows.sort((a, b) => {
-      if (a.service_date !== b.service_date) return a.service_date < b.service_date ? 1 : -1;
-      return b.unstaffed_count - a.unstaffed_count;
-    });
     state.unstaffedReportRows = rows;
-    // Odswiezenie w tle (np. cykliczne) nie powinno po cichu zamykac
-    // wlasnie rozwinietej przez uzytkownika grupy - trzymamy expandedKey,
-    // renderUnstaffedTable sam sobie poradzi jesli ten klucz juz nie
-    // istnieje w nowych danych (po prostu nic sie nie rozwinie).
+    // Domyslnie rozwijamy tylko najnowszy dzien - ale TYLKO przy pierwszym
+    // zaladowaniu (state.unstaffedExpandedDays === null). Cykliczne
+    // odswiezanie w tle (patrz setInterval) NIE powinno po cichu zwijac
+    // dnia, ktory uzytkownik sam sobie rozwinal.
+    if (state.unstaffedExpandedDays === null) {
+      state.unstaffedExpandedDays = new Set();
+      if (rows.length) {
+        const newestDate = rows.reduce((max, r) => (r.service_date > max ? r.service_date : max), rows[0].service_date);
+        state.unstaffedExpandedDays.add(newestDate);
+      }
+    }
     renderUnstaffedTable();
     document.getElementById("paginationRow").style.display = "none";
   } catch (e) {
@@ -1201,33 +1212,153 @@ function unstaffedGroupKey(row) {
   return `${row.service_date}|${row.mode}|${row.route_short_name}`;
 }
 
-function renderUnstaffedTable() {
-  const container = document.getElementById("tableContainer");
-  const rows = state.unstaffedReportRows;
+function unstaffedSortValue(row, sortKey) {
+  const v = row[sortKey];
+  // "Linia" ma sortowac sie numerycznie (1, 2, ... 902), nie alfabetycznie
+  // (co dawaloby np. "9" po "74") - ten sam pomysl co brygadSortKey/
+  // getSortValue w Live/Historii.
+  if (sortKey === "route_short_name") {
+    const n = Number(v);
+    return Number.isNaN(n) ? v : n;
+  }
+  return v;
+}
 
-  let html = "<table><thead><tr>";
-  for (const col of UNSTAFFED_REPORT_COLUMNS) {
-    html += `<th class="${col.cls ?? ''}">${col.label}</th>`;
+function sortUnstaffedRows(rows, sortKey, order) {
+  return [...rows].sort((a, b) => {
+    const av = unstaffedSortValue(a, sortKey);
+    const bv = unstaffedSortValue(b, sortKey);
+    if (av === null || av === undefined) return 1;
+    if (bv === null || bv === undefined) return -1;
+    if (av < bv) return order === "asc" ? -1 : 1;
+    if (av > bv) return order === "asc" ? 1 : -1;
+    return 0;
+  });
+}
+
+function computeUnstaffedDayGroups(rows) {
+  const byDay = new Map();
+  for (const r of rows) {
+    if (!byDay.has(r.service_date)) {
+      byDay.set(r.service_date, { service_date: r.service_date, service_date_fmt: r.service_date_fmt, day_total: 0 });
+    }
+    byDay.get(r.service_date).day_total += r.unstaffed_count;
+  }
+  return [...byDay.values()];
+}
+
+function unstaffedSortArrow(sortKey, currentSort, currentOrder) {
+  if (sortKey !== currentSort) return "";
+  return currentOrder === "asc" ? " ▲" : " ▼";
+}
+
+// Renderuje samodzielna <table> z wierszami "tryb+linia+liczba" dla JEDNEGO,
+// juz ustalonego dnia - uzywana zarowno "na plasko" (gdy user wybral
+// konkretna date filtrem) jak i zagniezdzona pod rozwinietym wierszem dnia
+// (gdy przeglada wiele dni na raz). Klikniecie wiersza rozwija liste
+// pojedynczych kursow (toggleUnstaffedGroup) - dziala identycznie w obu
+// kontekstach, bo klucz grupy zawiera juz service_date.
+function renderUnstaffedRouteTableHtml(routeRows) {
+  const sortKey = state.unstaffedSort && UNSTAFFED_ROUTE_COLUMNS.some((c) => c.sortKey === state.unstaffedSort)
+    ? state.unstaffedSort
+    : null;
+  const sorted = sortKey
+    ? sortUnstaffedRows(routeRows, sortKey, state.unstaffedOrder)
+    : [...routeRows].sort((a, b) => b.unstaffed_count - a.unstaffed_count); // domyslnie: najwiecej niewykonanych pierwsze
+
+  let html = '<table><thead><tr>';
+  for (const col of UNSTAFFED_ROUTE_COLUMNS) {
+    html += `<th class="${col.cls ?? ''}" data-sort-scope="route" data-sort-key="${col.sortKey}">${col.label}${unstaffedSortArrow(col.sortKey, sortKey, state.unstaffedOrder)}</th>`;
   }
   html += "</tr></thead><tbody>";
-
-  rows.forEach((row) => {
+  for (const row of sorted) {
     const key = unstaffedGroupKey(row);
     const isExpanded = state.unstaffedExpandedKey === key;
     html += `<tr class="data-row unstaffed-group-row${isExpanded ? ' expanded' : ''}" data-key="${key}">`;
-    for (const col of UNSTAFFED_REPORT_COLUMNS) {
+    for (const col of UNSTAFFED_ROUTE_COLUMNS) {
       html += `<td class="${col.cls ?? ''}">${row[col.key] ?? "—"}</td>`;
     }
     html += "</tr>";
     if (isExpanded) {
-      html += `<tr class="unstaffed-detail-row"><td colspan="${UNSTAFFED_REPORT_COLUMNS.length}">${renderUnstaffedDetailHtml(row)}</td></tr>`;
+      html += `<tr class="unstaffed-detail-row"><td colspan="${UNSTAFFED_ROUTE_COLUMNS.length}">${renderUnstaffedDetailHtml(row)}</td></tr>`;
     }
-  });
+  }
+  html += "</tbody></table>";
+  return html;
+}
+
+function renderUnstaffedTable() {
+  const container = document.getElementById("tableContainer");
+
+  if (state.selectedDate) {
+    // Filtr daty juz wybrany - jeden dzien, wiec bez poziomu grupowania po
+    // dniach, od razu plaska lista tryb+linia+liczba dla tego dnia.
+    container.innerHTML = renderUnstaffedRouteTableHtml(state.unstaffedReportRows);
+    attachUnstaffedHandlers(container);
+    return;
+  }
+
+  // Widok wielu dni na raz - kazdy dzien to jeden zwijany wiersz z suma,
+  // rozwijany do listy tryb+linia+liczba po kliknieciu.
+  const dayGroups = computeUnstaffedDayGroups(state.unstaffedReportRows);
+  const daySortKey = state.unstaffedSort === "service_date" || state.unstaffedSort === "day_total"
+    ? state.unstaffedSort
+    : null;
+  const sortedDays = daySortKey
+    ? sortUnstaffedRows(dayGroups, daySortKey, state.unstaffedOrder)
+    : [...dayGroups].sort((a, b) => (a.service_date < b.service_date ? 1 : -1)); // domyslnie: najnowszy dzien pierwszy
+
+  let html = "<table><thead><tr>";
+  for (const col of UNSTAFFED_DAY_COLUMNS) {
+    html += `<th class="${col.cls ?? ''}" data-sort-scope="day" data-sort-key="${col.sortKey}">${col.label}${unstaffedSortArrow(col.sortKey, daySortKey, state.unstaffedOrder)}</th>`;
+  }
+  html += "</tr></thead><tbody>";
+  for (const day of sortedDays) {
+    const isExpanded = state.unstaffedExpandedDays.has(day.service_date);
+    html += `<tr class="data-row unstaffed-day-row${isExpanded ? ' expanded' : ''}" data-day="${day.service_date}">`;
+    html += `<td class="col-narrow">${isExpanded ? "▾" : "▸"} ${day.service_date_fmt}</td>`;
+    html += `<td class="col-medium">${day.day_total}</td>`;
+    html += "</tr>";
+    if (isExpanded) {
+      const routeRows = state.unstaffedReportRows.filter((r) => r.service_date === day.service_date);
+      html += `<tr class="unstaffed-detail-row"><td colspan="${UNSTAFFED_DAY_COLUMNS.length}">${renderUnstaffedRouteTableHtml(routeRows)}</td></tr>`;
+    }
+  }
   html += "</tbody></table>";
   container.innerHTML = html;
+  attachUnstaffedHandlers(container);
+}
 
+function attachUnstaffedHandlers(container) {
+  container.querySelectorAll("tr.unstaffed-day-row").forEach((tr) => {
+    tr.addEventListener("click", () => {
+      const day = tr.dataset.day;
+      if (state.unstaffedExpandedDays.has(day)) {
+        state.unstaffedExpandedDays.delete(day);
+      } else {
+        state.unstaffedExpandedDays.add(day);
+      }
+      renderUnstaffedTable();
+    });
+  });
   container.querySelectorAll("tr.unstaffed-group-row").forEach((tr) => {
-    tr.addEventListener("click", () => toggleUnstaffedGroup(tr.dataset.key));
+    tr.addEventListener("click", (ev) => {
+      ev.stopPropagation(); // nie przelaczaj przy okazji rodzica-dnia, jesli zagniezdzone
+      toggleUnstaffedGroup(tr.dataset.key);
+    });
+  });
+  container.querySelectorAll("th[data-sort-key]").forEach((th) => {
+    th.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const key = th.dataset.sortKey;
+      if (state.unstaffedSort === key) {
+        state.unstaffedOrder = state.unstaffedOrder === "asc" ? "desc" : "asc";
+      } else {
+        state.unstaffedSort = key;
+        state.unstaffedOrder = "asc";
+      }
+      renderUnstaffedTable();
+    });
   });
 }
 
@@ -1239,7 +1370,7 @@ function renderUnstaffedDetailHtml(row) {
     return '<div class="hint">Brak szczegółów (spróbuj odświeżyć).</div>';
   }
   let html = `<div class="brigade-list-wrap"><table class="segment-table"><thead><tr>
-    <th>Kurs</th><th>Brygada</th><th>Rozkład: start</th><th>Rozkład: koniec</th>
+    <th>Kurs</th><th>Brygada</th><th>Rozkład: start</th><th>Rozkład: koniec</th><th>Relacja</th>
   </tr></thead><tbody>`;
   for (const t of state.unstaffedExpandedRows) {
     html += `<tr>
@@ -1247,6 +1378,7 @@ function renderUnstaffedDetailHtml(row) {
       <td>${t.brigade_label ?? t.block_id ?? "—"}</td>
       <td>${t.scheduled_start ?? "—"}</td>
       <td>${t.scheduled_end ?? "—"}</td>
+      <td class="relation-text">${t.relation ?? "—"}</td>
     </tr>`;
   }
   html += "</tbody></table></div>";
