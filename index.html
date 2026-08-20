@@ -197,6 +197,7 @@
        .controls) zamiast osobnych zakladek - prosciej i nie mnozy stanu
        (paginacja/sortowanie) per tryb x zakladka. -->
   <button class="tab-btn" data-tab="history">Historia</button>
+  <button class="tab-btn" data-tab="unstaffed">Niewykonane kursy</button>
 </div>
 
 <div id="summaryRow" class="summary-row"></div>
@@ -220,7 +221,7 @@
   <select id="routeFilter">
     <option value="">Wszystkie linie</option>
   </select>
-  <span class="hint">Kliknij nagłówek kolumny, żeby sortować · kliknij wiersz, żeby zobaczyć przebieg kursu</span>
+  <span class="hint" id="tableHint">Kliknij nagłówek kolumny, żeby sortować · kliknij wiersz, żeby zobaczyć przebieg kursu</span>
 </div>
 
 <div class="table-wrap">
@@ -278,6 +279,18 @@ const LIVE_COLUMNS = [
   { key: "last_seen_at", label: "Ostatni sygnał", cls: "col-medium" },
 ];
 
+// Zagregowany raport z /api/unstaffed_trips_report (grupowanie dzien+tryb+
+// linia) - wiersze to LICZBY niewykonanych kursow, nie pojedyncze kursy,
+// wiec nie ma tu "Kliknij wiersz zeby zobaczyc przebieg" (brak trip_id per
+// wiersz) ani standardowej paginacji (liczba kombinacji dzien x linia jest
+// mala, cala tabela miesci sie na raz).
+const UNSTAFFED_REPORT_COLUMNS = [
+  { key: "service_date_fmt", label: "Data", cls: "col-narrow" },
+  { key: "mode_label", label: "Tryb", cls: "col-narrow" },
+  { key: "route_short_name", label: "Linia", cls: "col-narrow" },
+  { key: "unstaffed_count", label: "Niewykonane kursy", cls: "col-medium" },
+];
+
 let state = {
   apiBase: "",
   tab: "live",
@@ -293,6 +306,9 @@ let state = {
   total: 0,
   liveRowsCache: [],
   offlineBrigades: [], // z /api/today_summary - doklejane jako syntetyczne wiersze w sortAndRenderLive
+  unstaffedReportRows: [], // zagregowane wiersze raportu (zakladka "Niewykonane kursy")
+  unstaffedExpandedKey: null, // klucz aktualnie rozwinietej grupy (dzien|tryb|linia) w raporcie, lub null
+  unstaffedExpandedRows: null, // zaladowane pojedyncze kursy dla rozwinietej grupy (null = w trakcie ladowania)
   expandedKey: null,      // trip_id+start_date aktualnie rozwinietego wiersza
   expandedSignals: null,  // zaladowane sygnaly dla rozwinietego wiersza
   expandedTickKey: null,  // ktory segment (stop_sequence) ma rozwiniete surowe ticki
@@ -979,6 +995,13 @@ function renderTable(rows, columns) {
 
   container.querySelectorAll("th").forEach((th) => {
     th.addEventListener("click", () => {
+      // Raport niewykonanych kursow ma wlasny, ustalony sort (dzien desc,
+      // liczba desc) budowany w loadUnstaffedTable - nie korzysta z
+      // state.sort/state.order jak Live/Historia, wiec klikniecie
+      // naglowka tutaj celowo nic nie robi zamiast probowac sortowac
+      // przez sortAndRenderLive()/loadHistoryTable(), ktore dzialaja na
+      // zupelnie innych danych.
+      if (state.tab === "unstaffed") return;
       const key = th.dataset.key;
       const current = effectiveSort();
       if (current.sort === key) {
@@ -1003,9 +1026,12 @@ function renderTable(rows, columns) {
       const idx = parseInt(tr.dataset.idx, 10);
       const row = rows[idx];
       // Brygada bez widocznego pojazdu nie ma trip_id - nie ma przebiegu
-      // kursu do pokazania, wiec klikniecie jest tu celowo no-opem zamiast
-      // odpytywania /api/trip_detail o cos, co nie istnieje.
-      if (row.isOfflinePlaceholder) return;
+      // kursu do pokazania. Wiersze raportu niewykonanych kursow (zakladka
+      // "Niewykonane kursy") to zagregowane LICZBY (dzien+tryb+linia), tez
+      // bez pojedynczego trip_id - w obu przypadkach klikniecie jest
+      // celowym no-opem zamiast odpytywania /api/trip_detail o cos, co nie
+      // istnieje.
+      if (row.isOfflinePlaceholder || state.tab === "unstaffed") return;
       toggleTripDetail(row, columnCount);
     });
   });
@@ -1128,14 +1154,173 @@ async function loadLiveTable(isBackgroundRefresh) {
   }
 }
 
+function fmtServiceDate(raw) {
+  // service_date z backendu to "YYYYMMDD" (format GTFS) - dla czytelnosci
+  // pokazujemy "YYYY-MM-DD" w tabeli.
+  if (!raw || raw.length !== 8) return raw ?? "—";
+  return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
+}
+
+async function loadUnstaffedTable(isBackgroundRefresh) {
+  const container = document.getElementById("tableContainer");
+  if (!isBackgroundRefresh) {
+    container.innerHTML = '<div class="loading">Ładowanie...</div>';
+  }
+  try {
+    const params = new URLSearchParams({ group_by: "service_date,mode,route" });
+    if (state.mode && state.mode !== "__offline__") params.set("mode", state.mode);
+    if (state.selectedDate) {
+      params.set("start_date", state.selectedDate);
+      params.set("end_date", state.selectedDate);
+    }
+    const data = await apiGet(`/api/unstaffed_trips_report?${params.toString()}`);
+    const rows = (data.rows ?? []).map((r) => ({
+      ...r,
+      service_date_fmt: fmtServiceDate(r.service_date),
+      mode_label: MODE_LABELS_ALERT[r.mode] ?? r.mode,
+    }));
+    // Najnowszy dzien najpierw, w obrebie dnia - najwiecej niewykonanych
+    // kursow najpierw (to zwykle to, co chce sie zobaczyc od razu).
+    rows.sort((a, b) => {
+      if (a.service_date !== b.service_date) return a.service_date < b.service_date ? 1 : -1;
+      return b.unstaffed_count - a.unstaffed_count;
+    });
+    state.unstaffedReportRows = rows;
+    // Odswiezenie w tle (np. cykliczne) nie powinno po cichu zamykac
+    // wlasnie rozwinietej przez uzytkownika grupy - trzymamy expandedKey,
+    // renderUnstaffedTable sam sobie poradzi jesli ten klucz juz nie
+    // istnieje w nowych danych (po prostu nic sie nie rozwinie).
+    renderUnstaffedTable();
+    document.getElementById("paginationRow").style.display = "none";
+  } catch (e) {
+    container.innerHTML = `<div class="error-state">Nie udało się pobrać danych: ${e.message}</div>`;
+  }
+}
+
+function unstaffedGroupKey(row) {
+  return `${row.service_date}|${row.mode}|${row.route_short_name}`;
+}
+
+function renderUnstaffedTable() {
+  const container = document.getElementById("tableContainer");
+  const rows = state.unstaffedReportRows;
+
+  let html = "<table><thead><tr>";
+  for (const col of UNSTAFFED_REPORT_COLUMNS) {
+    html += `<th class="${col.cls ?? ''}">${col.label}</th>`;
+  }
+  html += "</tr></thead><tbody>";
+
+  rows.forEach((row) => {
+    const key = unstaffedGroupKey(row);
+    const isExpanded = state.unstaffedExpandedKey === key;
+    html += `<tr class="data-row unstaffed-group-row${isExpanded ? ' expanded' : ''}" data-key="${key}">`;
+    for (const col of UNSTAFFED_REPORT_COLUMNS) {
+      html += `<td class="${col.cls ?? ''}">${row[col.key] ?? "—"}</td>`;
+    }
+    html += "</tr>";
+    if (isExpanded) {
+      html += `<tr class="unstaffed-detail-row"><td colspan="${UNSTAFFED_REPORT_COLUMNS.length}">${renderUnstaffedDetailHtml(row)}</td></tr>`;
+    }
+  });
+  html += "</tbody></table>";
+  container.innerHTML = html;
+
+  container.querySelectorAll("tr.unstaffed-group-row").forEach((tr) => {
+    tr.addEventListener("click", () => toggleUnstaffedGroup(tr.dataset.key));
+  });
+}
+
+function renderUnstaffedDetailHtml(row) {
+  if (state.unstaffedExpandedRows === null) {
+    return '<div class="loading">Ładowanie kursów...</div>';
+  }
+  if (!state.unstaffedExpandedRows.length) {
+    return '<div class="hint">Brak szczegółów (spróbuj odświeżyć).</div>';
+  }
+  let html = `<div class="brigade-list-wrap"><table class="segment-table"><thead><tr>
+    <th>Kurs</th><th>Brygada</th><th>Rozkład: start</th><th>Rozkład: koniec</th>
+  </tr></thead><tbody>`;
+  for (const t of state.unstaffedExpandedRows) {
+    html += `<tr>
+      <td title="${t.trip_id ?? ""}">${extractNumber(t.trip_id, "trip", t.mode)}</td>
+      <td>${t.brigade_label ?? t.block_id ?? "—"}</td>
+      <td>${t.scheduled_start ?? "—"}</td>
+      <td>${t.scheduled_end ?? "—"}</td>
+    </tr>`;
+  }
+  html += "</tbody></table></div>";
+  return html;
+}
+
+async function toggleUnstaffedGroup(key) {
+  if (state.unstaffedExpandedKey === key) {
+    // Ponowne klikniecie juz rozwinietej grupy - zwijamy.
+    state.unstaffedExpandedKey = null;
+    state.unstaffedExpandedRows = null;
+    renderUnstaffedTable();
+    return;
+  }
+  const row = state.unstaffedReportRows.find((r) => unstaffedGroupKey(r) === key);
+  if (!row) return;
+
+  state.unstaffedExpandedKey = key;
+  state.unstaffedExpandedRows = null; // pokazuje "Ladowanie..." do czasu odpowiedzi
+  renderUnstaffedTable();
+
+  try {
+    // Filtrujemy po mode+service_date po stronie API (oba sa dokladnymi
+    // kluczami), a po route_short_name JUZ po stronie klienta - raport nie
+    // ma route_id (grupuje po nazwie linii, nie po surowym id), a surowy
+    // /api/unstaffed_trips filtruje tylko po route_id, wiec nie dalo sie
+    // tego zrobic w jednym zapytaniu po stronie serwera bez zmiany API.
+    const params = new URLSearchParams({
+      mode: row.mode,
+      service_date: row.service_date,
+      limit: 500,
+    });
+    const data = await apiGet(`/api/unstaffed_trips?${params.toString()}`);
+    const filtered = (data.rows ?? [])
+      .filter((r) => r.route_short_name === row.route_short_name)
+      .sort((a, b) => (a.scheduled_start ?? "").localeCompare(b.scheduled_start ?? ""));
+    // Uzytkownik mogl w miedzyczasie kliknac cos innego - nie nadpisujemy
+    // wtedy juz nieaktualnego stanu.
+    if (state.unstaffedExpandedKey === key) {
+      state.unstaffedExpandedRows = filtered;
+      renderUnstaffedTable();
+    }
+  } catch (e) {
+    if (state.unstaffedExpandedKey === key) {
+      state.unstaffedExpandedRows = [];
+      renderUnstaffedTable();
+    }
+  }
+}
+
 async function loadTable(isBackgroundRefresh) {
+  const hint = document.getElementById("tableHint");
   if (state.tab === "history") {
+    hint.textContent = "Kliknij nagłówek kolumny, żeby sortować · kliknij wiersz, żeby zobaczyć przebieg kursu";
     document.getElementById("statusFilter").style.display = "";
     document.getElementById("dateFilter").style.display = "";
+    document.getElementById("routeFilter").style.display = "";
     await loadHistoryTable(isBackgroundRefresh);
+  } else if (state.tab === "unstaffed") {
+    hint.textContent = "Liczba niewykonanych kursów wg dnia, trybu i linii - filtruj datą/trybem powyżej.";
+    // Raport zagregowany - bez filtra statusu (nie ma statusow tu) ani
+    // filtra linii (raport grupuje po nazwie linii, nie po route_id, wiec
+    // istniejacy #routeFilter - ktory operuje na route_id - by tu nie
+    // pasowal); filtr daty i trybu zostaja, bo oba maja sens.
+    document.getElementById("statusFilter").style.display = "none";
+    document.getElementById("routeFilter").style.display = "none";
+    document.getElementById("dateFilter").style.display = "";
+    document.getElementById("paginationRow").style.display = "none";
+    await loadUnstaffedTable(isBackgroundRefresh);
   } else {
+    hint.textContent = "Kliknij nagłówek kolumny, żeby sortować · kliknij wiersz, żeby zobaczyć przebieg kursu";
     document.getElementById("statusFilter").style.display = "none";
     document.getElementById("dateFilter").style.display = "none";
+    document.getElementById("routeFilter").style.display = "";
     document.getElementById("paginationRow").style.display = "none";
     await loadLiveTable(isBackgroundRefresh);
   }
@@ -1159,10 +1344,11 @@ document.querySelectorAll(".tab-btn").forEach((btn) => {
     btn.classList.add("active");
     state.tab = btn.dataset.tab;
     state.offset = 0;
-    // "Tylko niezalogowane" nie ma odpowiednika w Historii (to pojecie
-    // dotyczy tylko biezacego stanu na zywo) - resetujemy, zeby dropdown
-    // nie zostawal wybrany na czyms co po cichu nic nie robi.
-    if (state.tab === "history" && state.mode === "__offline__") {
+    // "Tylko niezalogowane" nie ma odpowiednika w Historii ani w raporcie
+    // niewykonanych kursow (to pojecie dotyczy tylko biezacego stanu na
+    // zywo) - resetujemy, zeby dropdown nie zostawal wybrany na czyms co
+    // po cichu nic nie robi.
+    if ((state.tab === "history" || state.tab === "unstaffed") && state.mode === "__offline__") {
       state.mode = "";
       document.getElementById("modeFilter").value = "";
     }
