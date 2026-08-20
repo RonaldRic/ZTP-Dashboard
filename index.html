@@ -197,7 +197,7 @@
        .controls) zamiast osobnych zakladek - prosciej i nie mnozy stanu
        (paginacja/sortowanie) per tryb x zakladka. -->
   <button class="tab-btn" data-tab="history">Historia</button>
-  <button class="tab-btn" data-tab="unstaffed">Niewykonane kursy</button>
+  <button class="tab-btn" data-tab="unstaffed">Kursy bez danych GPS</button>
 </div>
 
 <div id="summaryRow" class="summary-row"></div>
@@ -289,13 +289,13 @@ const LIVE_COLUMNS = [
 //   tutaj, bo w tym kontekscie jest juz zawsze jedna, znana wartosc.
 const UNSTAFFED_DAY_COLUMNS = [
   { key: "service_date_fmt", label: "Data", cls: "col-narrow", sortKey: "service_date" },
-  { key: "day_total", label: "Niewykonane kursy (łącznie)", cls: "col-medium", sortKey: "day_total" },
+  { key: "day_total", label: "Bez danych GPS (łącznie)", cls: "col-medium", sortKey: "day_total" },
 ];
 
 const UNSTAFFED_ROUTE_COLUMNS = [
   { key: "mode_label", label: "Tryb", cls: "col-narrow", sortKey: "mode_label" },
   { key: "route_short_name", label: "Linia", cls: "col-narrow", sortKey: "route_short_name" },
-  { key: "unstaffed_count", label: "Niewykonane kursy", cls: "col-medium", sortKey: "unstaffed_count" },
+  { key: "unstaffed_count", label: "Bez danych GPS", cls: "col-medium", sortKey: "unstaffed_count" },
 ];
 
 let state = {
@@ -1438,7 +1438,7 @@ async function loadTable(isBackgroundRefresh) {
     document.getElementById("routeFilter").style.display = "";
     await loadHistoryTable(isBackgroundRefresh);
   } else if (state.tab === "unstaffed") {
-    hint.textContent = "Liczba niewykonanych kursów wg dnia, trybu i linii - filtruj datą/trybem powyżej.";
+    hint.textContent = "Liczba kursów bez danych GPS wg dnia, trybu i linii - filtruj datą/trybem powyżej.";
     // Raport zagregowany - bez filtra statusu (nie ma statusow tu) ani
     // filtra linii (raport grupuje po nazwie linii, nie po route_id, wiec
     // istniejacy #routeFilter - ktory operuje na route_id - by tu nie
