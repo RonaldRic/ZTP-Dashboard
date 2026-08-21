@@ -816,7 +816,7 @@ function renderDetailContent(row, signals) {
     </div>
     <div id="brigadeListArea">${renderBrigadeListHtml()}</div>
     ${renderMultiPassBanner(segments)}
-    <table class="segment-table"><thead><tr>
+    <div class="brigade-list-wrap"><table class="segment-table"><thead><tr>
       <th></th><th>Nr</th><th>Przystanek</th><th>Od</th><th>Do</th><th>Opóźnienie</th><th>Sygnałów</th>
     </tr></thead><tbody>`;
   let passNumber = 0;
@@ -860,7 +860,7 @@ function renderDetailContent(row, signals) {
       html += `</table></td></tr>`;
     }
   });
-  html += "</tbody></table></div>";
+  html += "</tbody></table></div></div>";
   return html;
 }
 
