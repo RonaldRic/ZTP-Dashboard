@@ -110,6 +110,7 @@
     background: var(--panel); border: 1px solid var(--panel-border); color: var(--text);
     padding: 7px 10px; border-radius: 6px; font-size: 13px;
   }
+  select:disabled { opacity: 0.5; cursor: not-allowed; }
   .table-wrap { padding: 0 20px 20px 20px; overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: 10px; overflow: hidden; font-size: 13px; table-layout: fixed; }
   th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--panel-border); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -229,7 +230,9 @@
   <select id="routeFilter">
     <option value="">Wszystkie linie</option>
   </select>
+  <input type="text" id="vehicleFilter" placeholder="Nr pojazdu (np. MM843)" style="display:none; width: 150px;">
   <span class="hint" id="tableHint">Kliknij nagłówek kolumny, żeby sortować · kliknij wiersz, żeby zobaczyć przebieg kursu</span>
+  <button type="button" id="historyScreenshotBtn" class="screenshot-btn" style="display:none;">📷 Zrzut tabeli</button>
 </div>
 
 <div class="table-wrap">
@@ -240,6 +243,12 @@
   <button id="prevBtn">← Poprzednie</button>
   <span id="pageInfo"></span>
   <button id="nextBtn">Następne →</button>
+  <select id="pageSizeSelect" title="Wybierz linię, żeby odblokować większe rozmiary strony">
+    <option value="50">50 / stronę</option>
+    <option value="100">100 / stronę</option>
+    <option value="250">250 / stronę</option>
+    <option value="500">500 / stronę</option>
+  </select>
 </div>
 
 <script>
@@ -316,6 +325,7 @@ let state = {
   route: "",
   mode: "", // "", "tram", "bus_mpk", "bus_mobilis" - filtr trybu
   selectedDate: "", // filtr daty w Historii, format YYYY-MM-DD (puste = wszystkie dni)
+  vehicleFilter: "", // filtr numeru pojazdu w Historii (dokladne dopasowanie, np. "MM843") - do sledzenia dziennej rotacji jednego autobusu miedzy liniami/brygadami
   limit: 50,
   offset: 0,
   total: 0,
@@ -875,10 +885,9 @@ function renderDetailContent(row, signals) {
   return html;
 }
 
-async function captureDetailScreenshot(btn) {
-  const wrap = btn.closest(".detail-wrap");
-  if (!wrap || typeof html2canvas === "undefined") {
-    console.error("Nie mozna wygenerowac zrzutu: brak .detail-wrap lub biblioteki html2canvas");
+async function captureElementScreenshot(element, btn, nameHintOverride) {
+  if (!element || typeof html2canvas === "undefined") {
+    console.error("Nie mozna wygenerowac zrzutu: brak elementu docelowego lub biblioteki html2canvas");
     return;
   }
   const originalText = btn.textContent;
@@ -890,7 +899,7 @@ async function captureDetailScreenshot(btn) {
     // przegladarka (np. w komunikatorze) wygladaloby zle w obu trybach
     // (jasnym/ciemnym).
     const bg = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim() || "#ffffff";
-    const canvas = await html2canvas(wrap, {
+    const canvas = await html2canvas(element, {
       backgroundColor: bg,
       scale: 2, // ostrzejszy obraz (jak ekran retina) niz 1:1 z pikseli CSS
       // Sam przycisk "Zrzut" nie ma sensu na wygenerowanym obrazku -
@@ -902,7 +911,7 @@ async function captureDetailScreenshot(btn) {
       if (!blob) return;
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      const nameHint = (btn.dataset.screenshotName || "przebieg_kursu").replace(/[^a-zA-Z0-9_-]+/g, "_");
+      const nameHint = (nameHintOverride ?? btn.dataset.screenshotName ?? "zrzut").replace(/[^a-zA-Z0-9_-]+/g, "_");
       const timestamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
       a.href = url;
       a.download = `${nameHint}_${timestamp}.png`;
@@ -919,6 +928,15 @@ async function captureDetailScreenshot(btn) {
   }
   btn.textContent = originalText;
   btn.disabled = false;
+}
+
+async function captureDetailScreenshot(btn) {
+  const wrap = btn.closest(".detail-wrap");
+  if (!wrap) {
+    console.error("Nie mozna wygenerowac zrzutu: brak .detail-wrap");
+    return;
+  }
+  await captureElementScreenshot(wrap, btn);
 }
 
 async function loadBrigadeDayTrips(row) {
@@ -1124,6 +1142,7 @@ async function loadHistoryTable(isBackgroundRefresh) {
     if (state.route) params.set("route_id", state.route);
     if (state.mode) params.set("mode", state.mode);
     if (state.selectedDate) params.set("start_date", toGtfsDate(state.selectedDate));
+    if (state.vehicleFilter) params.set("vehicle_id", state.vehicleFilter);
 
     const data = await apiGet(`/api/trip_history?${params.toString()}`);
     state.total = data.total;
@@ -1514,11 +1533,15 @@ async function toggleUnstaffedGroup(key) {
 
 async function loadTable(isBackgroundRefresh) {
   const hint = document.getElementById("tableHint");
+  const historyScreenshotBtn = document.getElementById("historyScreenshotBtn");
   if (state.tab === "history") {
     hint.textContent = "Kliknij nagłówek kolumny, żeby sortować · kliknij wiersz, żeby zobaczyć przebieg kursu";
     document.getElementById("statusFilter").style.display = "";
     document.getElementById("dateFilter").style.display = "";
     document.getElementById("routeFilter").style.display = "";
+    document.getElementById("vehicleFilter").style.display = "";
+    historyScreenshotBtn.style.display = "";
+    syncPageSizeGating();
     await loadHistoryTable(isBackgroundRefresh);
   } else if (state.tab === "unstaffed") {
     hint.textContent = "Liczba kursów bez danych GPS wg dnia, trybu i linii - filtruj datą/trybem powyżej.";
@@ -1528,15 +1551,19 @@ async function loadTable(isBackgroundRefresh) {
     // pasowal); filtr daty i trybu zostaja, bo oba maja sens.
     document.getElementById("statusFilter").style.display = "none";
     document.getElementById("routeFilter").style.display = "none";
+    document.getElementById("vehicleFilter").style.display = "none";
     document.getElementById("dateFilter").style.display = "";
     document.getElementById("paginationRow").style.display = "none";
+    historyScreenshotBtn.style.display = "none";
     await loadUnstaffedTable(isBackgroundRefresh);
   } else {
     hint.textContent = "Kliknij nagłówek kolumny, żeby sortować · kliknij wiersz, żeby zobaczyć przebieg kursu";
     document.getElementById("statusFilter").style.display = "none";
     document.getElementById("dateFilter").style.display = "none";
     document.getElementById("routeFilter").style.display = "";
+    document.getElementById("vehicleFilter").style.display = "none";
     document.getElementById("paginationRow").style.display = "none";
+    historyScreenshotBtn.style.display = "none";
     await loadLiveTable(isBackgroundRefresh);
   }
 }
@@ -1587,16 +1614,69 @@ document.getElementById("dateFilter").addEventListener("change", (e) => {
   loadTable();
 });
 
+function syncPageSizeGating() {
+  // Wieksze strony (>50) w Historii sa dostepne TYLKO gdy wybrana jest
+  // konkretna linia - bez tego, "wszystkie linie" + duzy rozmiar strony
+  // moglyby wygenerowac naprawde duza, ciezka do przegladania tabele
+  // (nawet jesli technicznie ograniczona twardym limitem 500 po stronie
+  // API). FIX 21.08.2026, na wyrazna prosbe uzytkownika.
+  const select = document.getElementById("pageSizeSelect");
+  if (!state.route) {
+    select.disabled = true;
+    if (state.limit !== 50) {
+      state.limit = 50;
+      select.value = "50";
+      state.offset = 0;
+    }
+  } else {
+    select.disabled = false;
+  }
+}
+
 document.getElementById("routeFilter").addEventListener("change", (e) => {
   state.route = e.target.value;
   state.offset = 0;
+  syncPageSizeGating();
   loadTable();
+});
+
+document.getElementById("pageSizeSelect").addEventListener("change", (e) => {
+  state.limit = parseInt(e.target.value, 10);
+  state.offset = 0;
+  loadHistoryTable();
 });
 
 document.getElementById("modeFilter").addEventListener("change", (e) => {
   state.mode = e.target.value;
   state.offset = 0;
   loadTable();
+});
+
+function applyVehicleFilter(value) {
+  const trimmed = value.trim();
+  if (trimmed === state.vehicleFilter) return; // bez zbednego przeladowania, jesli wartosc sie nie zmienila
+  state.vehicleFilter = trimmed;
+  state.offset = 0;
+  loadHistoryTable();
+}
+
+const vehicleFilterInput = document.getElementById("vehicleFilter");
+vehicleFilterInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") applyVehicleFilter(e.target.value);
+});
+vehicleFilterInput.addEventListener("blur", (e) => applyVehicleFilter(e.target.value));
+
+document.getElementById("historyScreenshotBtn").addEventListener("click", (ev) => {
+  const btn = ev.currentTarget;
+  const routeSelect = document.getElementById("routeFilter");
+  const routeLabel = state.route
+    ? (routeSelect.options[routeSelect.selectedIndex]?.textContent ?? state.route)
+    : "wszystkie_linie";
+  const modeLabel = state.mode && state.mode !== "__offline__" ? (MODE_LABELS_ALERT[state.mode] ?? state.mode) : "wszystkie_tryby";
+  const dateLabel = state.selectedDate || "wszystkie_dni";
+  const vehicleLabel = state.vehicleFilter ? `_${state.vehicleFilter}` : "";
+  const nameHint = `historia_${routeLabel}_${modeLabel}_${dateLabel}${vehicleLabel}`;
+  captureElementScreenshot(document.getElementById("tableContainer"), btn, nameHint);
 });
 
 document.getElementById("prevBtn").addEventListener("click", () => {
