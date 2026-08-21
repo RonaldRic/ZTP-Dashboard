@@ -486,7 +486,7 @@ async function loadServiceAlerts() {
 async function loadHistorySummary() {
   try {
     const params = new URLSearchParams();
-    if (state.selectedDate) params.set("start_date", state.selectedDate);
+    if (state.selectedDate) params.set("start_date", toGtfsDate(state.selectedDate));
     const query = params.toString() ? `?${params.toString()}` : "";
     const data = await apiGet(`/api/summary${query}`);
     const total = data.by_status.reduce((sum, r) => sum + r.n, 0);
@@ -1123,7 +1123,7 @@ async function loadHistoryTable(isBackgroundRefresh) {
     if (state.status) params.set("status", state.status);
     if (state.route) params.set("route_id", state.route);
     if (state.mode) params.set("mode", state.mode);
-    if (state.selectedDate) params.set("start_date", state.selectedDate);
+    if (state.selectedDate) params.set("start_date", toGtfsDate(state.selectedDate));
 
     const data = await apiGet(`/api/trip_history?${params.toString()}`);
     state.total = data.total;
@@ -1232,6 +1232,16 @@ function fmtServiceDate(raw) {
   return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
 }
 
+function toGtfsDate(isoDate) {
+  // Odwrotnosc fmtServiceDate: <input type="date"> daje "YYYY-MM-DD", ale
+  // API/baza oczekuja "YYYYMMDD" (bez myslnikow, format GTFS) - FIX
+  // 21.08.2026: bez tej konwersji filtr daty NIGDY nie trafial w zaden
+  // wiersz (string "2026-08-20" nie rownal sie przechowywanemu
+  // "20260820"), niezaleznie od zakladki (Historia/Kursy bez danych GPS)
+  // czy wybranej daty - stad zawsze "Brak kursow spelniajacych kryteria."
+  return isoDate ? isoDate.replaceAll("-", "") : isoDate;
+}
+
 async function loadUnstaffedTable(isBackgroundRefresh) {
   const container = document.getElementById("tableContainer");
   if (!isBackgroundRefresh) {
@@ -1241,8 +1251,8 @@ async function loadUnstaffedTable(isBackgroundRefresh) {
     const params = new URLSearchParams({ group_by: "service_date,mode,route" });
     if (state.mode && state.mode !== "__offline__") params.set("mode", state.mode);
     if (state.selectedDate) {
-      params.set("start_date", state.selectedDate);
-      params.set("end_date", state.selectedDate);
+      params.set("start_date", toGtfsDate(state.selectedDate));
+      params.set("end_date", toGtfsDate(state.selectedDate));
     }
     const data = await apiGet(`/api/unstaffed_trips_report?${params.toString()}`);
     const rows = (data.rows ?? []).map((r) => ({
