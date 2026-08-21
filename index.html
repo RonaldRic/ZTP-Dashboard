@@ -1401,6 +1401,12 @@ function renderUnstaffedTable() {
 }
 
 function attachUnstaffedHandlers(container) {
+  container.querySelectorAll(".screenshot-btn").forEach((btn) => {
+    btn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      captureDetailScreenshot(btn);
+    });
+  });
   container.querySelectorAll("tr.unstaffed-day-row").forEach((tr) => {
     tr.addEventListener("click", () => {
       const day = tr.dataset.day;
@@ -1440,7 +1446,13 @@ function renderUnstaffedDetailHtml(row) {
   if (!state.unstaffedExpandedRows.length) {
     return '<div class="hint">Brak szczegółów (spróbuj odświeżyć).</div>';
   }
-  let html = `<div class="brigade-list-wrap"><table class="segment-table"><thead><tr>
+  const nameHint = `bez_danych_gps_${row.mode}_${row.route_short_name}_${row.service_date}`;
+  let html = `<div class="detail-wrap">
+    <div class="detail-header">
+      <div class="title">Bez danych GPS: ${row.mode_label ?? row.mode} ${row.route_short_name ?? ""} · ${row.service_date_fmt ?? row.service_date ?? ""}</div>
+      <button type="button" class="screenshot-btn" data-screenshot-name="${nameHint}">📷 Zrzut</button>
+    </div>
+    <div class="brigade-list-wrap"><table class="segment-table"><thead><tr>
     <th>Kurs</th><th>Brygada</th><th>Rozkład: start</th><th>Rozkład: koniec</th><th>Relacja</th>
   </tr></thead><tbody>`;
   for (const t of state.unstaffedExpandedRows) {
@@ -1452,7 +1464,7 @@ function renderUnstaffedDetailHtml(row) {
       <td class="relation-text">${t.relation ?? "—"}</td>
     </tr>`;
   }
-  html += "</tbody></table></div>";
+  html += "</tbody></table></div></div>";
   return html;
 }
 
