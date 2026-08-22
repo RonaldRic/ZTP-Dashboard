@@ -272,8 +272,8 @@ const HISTORY_COLUMNS = [
   { key: "scheduled_end_seconds", label: "Rozkład: koniec", cls: "col-narrow" },
   { key: "relation", label: "Relacja", cls: "col-wide" },
   { key: "status", label: "Status", cls: "col-medium" },
-  { key: "last_stop_sequence", label: "Nr przyst.", cls: "col-narrow" },
-  { key: "last_stop_name", label: "Nazwa przystanku", cls: "col-wide" },
+  { key: "last_stop_combined", label: "Ostatni przystanek", cls: "col-wide", sortKey: "last_stop_sequence" },
+  { key: "first_delay_seconds", label: "Opóźn. na starcie", cls: "col-medium" },
   { key: "last_delay_seconds", label: "Ostatnie opóźnienie", cls: "col-medium" },
   { key: "avg_delay_seconds", label: "Śr. opóźnienie", cls: "col-medium" },
   { key: "max_delay_seconds", label: "Maks. opóźnienie", cls: "col-medium" },
@@ -288,8 +288,8 @@ const LIVE_COLUMNS = [
   { key: "scheduled_start_seconds", label: "Rozkład: start", cls: "col-narrow" },
   { key: "scheduled_end_seconds", label: "Rozkład: koniec", cls: "col-narrow" },
   { key: "relation", label: "Relacja", cls: "col-wide" },
-  { key: "max_stop_sequence", label: "Nr przyst.", cls: "col-narrow" },
-  { key: "last_stop_name", label: "Nazwa przystanku", cls: "col-wide" },
+  { key: "last_stop_combined", label: "Ostatni przystanek", cls: "col-wide", sortKey: "max_stop_sequence" },
+  { key: "first_delay_seconds", label: "Opóźn. na starcie", cls: "col-medium" },
   { key: "last_delay_seconds", label: "Aktualne opóźnienie", cls: "col-medium" },
   { key: "avg_delay_seconds", label: "Śr. opóźnienie", cls: "col-medium" },
   { key: "max_delay_seconds", label: "Maks. opóźnienie", cls: "col-medium" },
@@ -688,12 +688,24 @@ function fullVehicleNumber(row) {
   return `${prefix}${numStr}`;
 }
 
-function vehicleCell(row) {
+function vehicleCell(row, colCls) {
   const parts = [];
   if (row.vehicle_type) parts.push(row.vehicle_type);
   if (row.vehicle_depot) parts.push(row.vehicle_depot);
-  const title = parts.length ? parts.join(" · ") : "typ nieznany";
-  return `<td title="${title}">${fullVehicleNumber(row)}</td>`;
+  const baseTitle = parts.length ? parts.join(" · ") : "typ nieznany";
+  // FIX 21.08.2026: to samo oznaczenie "⇄" co juz istnialo w liscie "inne
+  // kursy tej brygady dzisiaj" (renderBrigadeListHtml) - tam liczone po
+  // stronie JS (lista jest juz chronologiczna i ograniczona do jednej
+  // brygady), tutaj wprost z serwera (row.vehicle_changed_from_previous),
+  // bo w glownej tabeli wiersze moga byc w dowolnej kolejnosci/z wielu
+  // brygad naraz - patrz uzasadnienie w api.py przy history_source.
+  const classes = [colCls, row.vehicle_changed_from_previous ? "vehicle-swap" : ""].filter(Boolean).join(" ");
+  const classAttr = classes ? ` class="${classes}"` : "";
+  if (row.vehicle_changed_from_previous) {
+    const title = `Inny wagon niż w poprzednim kursie tej brygady${baseTitle !== "typ nieznany" ? " · " + baseTitle : ""}`;
+    return `<td${classAttr} title="${title}">${fullVehicleNumber(row)} ⇄</td>`;
+  }
+  return `<td${classAttr} title="${baseTitle}">${fullVehicleNumber(row)}</td>`;
 }
 
 function renderRowCells(row, columns) {
@@ -709,13 +721,13 @@ function renderRowCells(row, columns) {
       if (row.isOfflinePlaceholder) {
         html += `<td class="${col.cls}" style="text-align: center; font-weight: 700;" title="Brak wagonu/pojazdu - brygada powinna teraz kursować">!</td>`;
       } else {
-        html += vehicleCell(row).replace("<td", `<td class="${col.cls}"`);
+        html += vehicleCell(row, col.cls);
       }
     } else if (col.key === "relation") {
       html += `<td class="${col.cls} relation-text">${row.relation ?? "—"}</td>`;
     } else if (col.key === "status") {
       html += `<td class="${col.cls}"><span class="status-pill status-${row.status}">${STATUS_LABELS[row.status] || row.status}</span></td>`;
-    } else if (col.key === "avg_delay_seconds" || col.key === "max_delay_seconds" || col.key === "last_delay_seconds") {
+    } else if (col.key === "avg_delay_seconds" || col.key === "max_delay_seconds" || col.key === "last_delay_seconds" || col.key === "first_delay_seconds") {
       html += `<td class="${col.cls}" style="${delayStyle(row[col.key])}">${fmtDelay(row[col.key])}</td>`;
     } else if (col.key === "last_seen_at") {
       html += `<td class="${col.cls}">${fmtTime(row.last_seen_at)}</td>`;
@@ -723,8 +735,15 @@ function renderRowCells(row, columns) {
       html += `<td class="${col.cls}">${row.scheduled_start ?? "—"}</td>`;
     } else if (col.key === "scheduled_end_seconds") {
       html += `<td class="${col.cls}">${row.scheduled_end ?? "—"}</td>`;
-    } else if (col.key === "last_stop_name") {
-      html += `<td class="${col.cls}">${row.last_stop_name ?? "—"}</td>`;
+    } else if (col.key === "last_stop_combined") {
+      // FIX 22.08.2026: polaczone "Nr przyst." + "Nazwa przystanku" w jedna
+      // kolumne ("NN. Nazwa"), zeby zwolnic miejsce w tabeli - Historia
+      // uzywa last_stop_sequence, Live (otwarte kursy) uzywa
+      // max_stop_sequence, wiec sprawdzamy oba.
+      const seq = row.last_stop_sequence ?? row.max_stop_sequence;
+      const name = row.last_stop_name;
+      const seqLabel = (seq !== null && seq !== undefined) ? String(seq).padStart(2, "0") + ". " : "";
+      html += `<td class="${col.cls}">${name ? seqLabel + name : "—"}</td>`;
     } else {
       html += `<td class="${col.cls ?? ''}">${row[col.key] ?? "—"}</td>`;
     }
@@ -1068,7 +1087,7 @@ function renderTable(rows, columns) {
 
   let html = "<table><thead><tr>";
   for (const col of columns) {
-    html += `<th class="${col.cls ?? ''}" data-key="${col.key}">${col.label}${renderArrow(col.key)}</th>`;
+    html += `<th class="${col.cls ?? ''}" data-key="${col.sortKey ?? col.key}">${col.label}${renderArrow(col.sortKey ?? col.key)}</th>`;
   }
   html += "</tr></thead><tbody>";
   rows.forEach((row, idx) => {
