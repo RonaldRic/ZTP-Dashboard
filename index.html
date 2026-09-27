@@ -344,6 +344,8 @@ let state = {
   unstaffedSort: null, // "service_date" | "day_total" | "mode_label" | "route_short_name" | "unstaffed_count" | null = domyslny
   unstaffedOrder: "desc",
   alertsHistoryRows: [], // pelna historia komunikatow (zakladka "Archiwum komunikatow"), z /api/service_alerts_history
+  alertsSort: null, // "first_seen_at" | "last_seen_at" | null = domyslna kolejnosc z API (last_seen_at desc)
+  alertsOrder: "desc",
   unstaffedExpandedDays: null, // Set() dni rozwinietych w widoku "wszystkie dni" - null = jeszcze nie zainicjalizowany (patrz loadUnstaffedTable)
   expandedKey: null,      // trip_id+start_date aktualnie rozwinietego wiersza
   expandedSignals: null,  // zaladowane sygnaly dla rozwinietego wiersza
@@ -506,11 +508,10 @@ async function loadServiceAlerts() {
 // filtra po trybie (tylko `limit`, max 500) - ale skoro komunikatow jest
 // nieliczna garstka (rzadkie, recznie wpisywane przez operatora ogloszenia,
 // nie cos generowanego per-kurs), filtrowanie po #modeFilter robimy po
-// prostu po stronie przegladarki, bez potrzeby zmian w api.py. Kolejnosc
-// (najnowsze/ostatnio widziane pierwsze) przychodzi juz gotowa z API
-// (ORDER BY last_seen_at DESC) - celowo bez wlasnego sortowania klikaniem
-// w naglowki, jak w Historii/Live - przy tak malej, rzadko zmieniajacej
-// sie tabeli to niepotrzebna zlozonosc.
+// prostu po stronie przegladarki, bez potrzeby zmian w api.py. Domyslna
+// kolejnosc (najnowsze/ostatnio widziane pierwsze) przychodzi juz gotowa
+// z API (ORDER BY last_seen_at DESC); kolumny "Od"/"Ostatnio widziany"
+// da sie tez posortowac klikaniem w naglowek (patrz renderAlertsHistoryTable).
 async function loadAlertsHistoryTable(isBackgroundRefresh) {
   const container = document.getElementById("tableContainer");
   if (!isBackgroundRefresh) {
@@ -525,11 +526,22 @@ async function loadAlertsHistoryTable(isBackgroundRefresh) {
   }
 }
 
+function alertsSortArrow(key) {
+  if (state.alertsSort !== key) return "";
+  return state.alertsOrder === "asc" ? " ▲" : " ▼";
+}
+
 function renderAlertsHistoryTable() {
   const container = document.getElementById("tableContainer");
-  const rows = (state.mode && state.mode !== "__offline__")
+  let rows = (state.mode && state.mode !== "__offline__")
     ? state.alertsHistoryRows.filter((a) => a.mode === state.mode)
     : state.alertsHistoryRows;
+
+  if (state.alertsSort) {
+    const key = state.alertsSort;
+    const dir = state.alertsOrder === "asc" ? 1 : -1;
+    rows = [...rows].sort((a, b) => dir * ((a[key] ?? 0) - (b[key] ?? 0)));
+  }
 
   if (!rows.length) {
     container.innerHTML = '<div class="loading">Brak komunikatów w historii.</div>';
@@ -541,8 +553,8 @@ function renderAlertsHistoryTable() {
     '<th class="col-medium">Status</th>' +
     '<th class="col-wide">Nagłówek</th>' +
     '<th class="col-wide">Treść</th>' +
-    '<th class="col-medium">Od</th>' +
-    '<th class="col-medium">Ostatnio widziany</th>' +
+    `<th class="col-medium" data-sort-key="first_seen_at">Od${alertsSortArrow("first_seen_at")}</th>` +
+    `<th class="col-medium" data-sort-key="last_seen_at">Ostatnio widziany${alertsSortArrow("last_seen_at")}</th>` +
     '</tr></thead><tbody>';
   for (const a of rows) {
     const modeLabel = escapeHtml(MODE_LABELS_ALERT[a.mode] ?? a.mode);
@@ -559,6 +571,20 @@ function renderAlertsHistoryTable() {
   }
   html += "</tbody></table>";
   container.innerHTML = html;
+
+  container.querySelectorAll("th[data-sort-key]").forEach((th) => {
+    th.style.cursor = "pointer";
+    th.addEventListener("click", () => {
+      const key = th.dataset.sortKey;
+      if (state.alertsSort === key) {
+        state.alertsOrder = state.alertsOrder === "asc" ? "desc" : "asc";
+      } else {
+        state.alertsSort = key;
+        state.alertsOrder = "desc";
+      }
+      renderAlertsHistoryTable(); // tylko re-render z juz posiadanych danych, bez ponownego zapytania do API
+    });
+  });
 }
 
 async function loadHistorySummary() {
