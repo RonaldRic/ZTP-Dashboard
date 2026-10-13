@@ -133,6 +133,11 @@
   .status-alert-active { background: rgba(62,207,142,0.15); color: var(--ok); }
   .status-alert-inactive { background: rgba(107,114,128,0.15); color: var(--neutral); }
   .alert-text-cell { color: var(--text); font-size: 13px; white-space: normal; max-width: 420px; }
+  .alert-rev-badge { display: inline-block; margin-left: 6px; padding: 1px 8px; border-radius: 10px; font-size: 11px; cursor: pointer; background: rgba(91,141,239,0.15); color: var(--text); border: 0; font-family: inherit; }
+  .alert-rev-row td { background: rgba(255,255,255,0.03); padding: 8px 14px; white-space: normal; }
+  .alert-rev-item { margin: 0 0 10px; font-size: 12px; color: var(--text-dim); }
+  .alert-rev-item:last-child { margin-bottom: 0; }
+  .alert-rev-item .rev-time { color: var(--text); font-weight: 600; }
   .alert-desc-cell { color: var(--text-dim); font-size: 12px; white-space: normal; max-width: 480px; }
   /* Kolor opoznien liczony teraz jako ciagly gradient (patrz delayStyle()
      w JS) i wstawiany jako inline style, nie klasa - stare .delay-ok/
@@ -344,6 +349,7 @@ let state = {
   unstaffedSort: null, // "service_date" | "day_total" | "mode_label" | "route_short_name" | "unstaffed_count" | null = domyslny
   unstaffedOrder: "desc",
   alertsHistoryRows: [], // pelna historia komunikatow (zakladka "Archiwum komunikatow"), z /api/service_alerts_history
+  alertsExpanded: new Set(), // klucze "tryb|alert_id" komunikatow z rozwinieta historia wersji
   alertsSort: null, // "first_seen_at" | "last_seen_at" | null = domyslna kolejnosc z API (last_seen_at desc)
   alertsOrder: "desc",
   unstaffedExpandedDays: null, // Set() dni rozwinietych w widoku "wszystkie dni" - null = jeszcze nie zainicjalizowany (patrz loadUnstaffedTable)
@@ -560,17 +566,42 @@ function renderAlertsHistoryTable() {
     const modeLabel = escapeHtml(MODE_LABELS_ALERT[a.mode] ?? a.mode);
     const statusCls = a.active ? "status-alert-active" : "status-alert-inactive";
     const statusLabel = a.active ? "aktywny" : "zakończony";
+    const revs = a.revisions ?? [];
+    const key = `${a.mode}|${a.alert_id}`;
+    const open = state.alertsExpanded.has(key);
+    const badge = revs.length > 1
+      ? `<button class="alert-rev-badge" data-rev-key="${escapeHtml(key)}">${revs.length} wersji ${open ? "▲" : "▼"}</button>`
+      : "";
     html += `<tr>` +
       `<td class="col-narrow">${modeLabel}</td>` +
       `<td class="col-medium"><span class="status-pill ${statusCls}">${statusLabel}</span></td>` +
-      `<td class="col-wide alert-text-cell">${escapeHtml(a.header ?? "—")}</td>` +
+      `<td class="col-wide alert-text-cell">${escapeHtml(a.header ?? "—")}${badge}</td>` +
       `<td class="col-wide alert-desc-cell">${escapeHtml(a.description ?? "—")}</td>` +
       `<td class="col-medium">${fmtTime(a.first_seen_at)}</td>` +
       `<td class="col-medium">${fmtTime(a.last_seen_at)}</td>` +
       `</tr>`;
+    if (open && revs.length > 1) {
+      let inner = "";
+      for (let i = revs.length - 1; i >= 0; i--) {
+        const r = revs[i];
+        inner += `<div class="alert-rev-item"><span class="rev-time">Wersja ${i + 1}` +
+          `${i === revs.length - 1 ? " (aktualna)" : ""} · ${fmtTime(r.seen_from)} – ${fmtTime(r.seen_to)}</span><br>` +
+          `${r.header ? "<b>" + escapeHtml(r.header) + "</b><br>" : ""}${escapeHtml(r.description ?? "—")}</div>`;
+      }
+      html += `<tr class="alert-rev-row"><td colspan="6">${inner}</td></tr>`;
+    }
   }
   html += "</tbody></table>";
   container.innerHTML = html;
+
+  container.querySelectorAll("button[data-rev-key]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const k = btn.dataset.revKey;
+      if (state.alertsExpanded.has(k)) state.alertsExpanded.delete(k);
+      else state.alertsExpanded.add(k);
+      renderAlertsHistoryTable();
+    });
+  });
 
   container.querySelectorAll("th[data-sort-key]").forEach((th) => {
     th.style.cursor = "pointer";
