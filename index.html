@@ -245,6 +245,9 @@
     <option value="">Wszystkie linie</option>
   </select>
   <input type="text" id="vehicleFilter" placeholder="Nr pojazdu (np. MM843)" style="display:none; width: 150px;">
+  <label id="brigadeHideNoSwapLabel" style="display:none; align-items: center; gap: 5px; font-size: 13px; color: var(--text-dim); cursor: pointer;">
+    <input type="checkbox" id="brigadeHideNoSwapCheckbox"> Ukryj brygady bez zmiany pojazdu
+  </label>
   <span class="hint" id="tableHint">Kliknij nagłówek kolumny, żeby sortować · kliknij wiersz, żeby zobaczyć przebieg kursu</span>
   <button type="button" id="historyScreenshotBtn" class="screenshot-btn" style="display:none;">📷 Zrzut tabeli</button>
 </div>
@@ -383,6 +386,7 @@ let state = {
   brigadeExpandedRows: null, // pelny przebieg kursow rozwinietej brygady (z /api/trip_history), null = w trakcie ladowania
   brigadeSort: null,
   brigadeOrder: "desc",
+  brigadeHideNoSwap: false, // checkbox "Ukryj brygady bez zmiany pojazdu" - filtruje tylko liste brygad w obrebie dnia, nie wplywa na podsumowanie dnia (liczba brygad/zmian lacznie)
   expandedKey: null,      // trip_id+start_date aktualnie rozwinietego wiersza
   expandedSignals: null,  // zaladowane sygnaly dla rozwinietego wiersza
   expandedTickKey: null,  // ktory segment (stop_sequence) ma rozwiniete surowe ticki
@@ -1808,12 +1812,22 @@ function brigadeSortArrow(sortKey, currentSort, currentOrder) {
 // Renderuje liste brygad (tryb+linia+brygada+liczniki) dla JEDNEGO,
 // juz ustalonego dnia - analogicznie do renderUnstaffedRouteTableHtml.
 function renderBrigadeGroupTableHtml(groupRows) {
+  // Checkbox "Ukryj brygady bez zmiany pojazdu" - filtruje TYLKO te wiersze
+  // (dzien i jego podsumowanie-liczniki zostaja bez zmian, patrz state.brigadeHideNoSwap).
+  const visibleRows = state.brigadeHideNoSwap
+    ? groupRows.filter((r) => (r.swap_count ?? 0) > 0)
+    : groupRows;
+
+  if (!visibleRows.length) {
+    return '<div class="hint" style="padding: 12px 0;">Brak brygad ze zmianą pojazdu tego dnia (filtr "Ukryj brygady bez zmiany pojazdu" jest włączony).</div>';
+  }
+
   const sortKey = state.brigadeSort && BRIGADE_GROUP_COLUMNS.some((c) => c.sortKey === state.brigadeSort)
     ? state.brigadeSort
     : null;
   const sorted = sortKey
-    ? sortBrigadeRows(groupRows, sortKey, state.brigadeOrder)
-    : [...groupRows].sort((a, b) => brigadeSortValue(a, "brigade_label") - brigadeSortValue(b, "brigade_label"));
+    ? sortBrigadeRows(visibleRows, sortKey, state.brigadeOrder)
+    : [...visibleRows].sort((a, b) => brigadeSortValue(a, "brigade_label") - brigadeSortValue(b, "brigade_label"));
 
   let html = '<table><thead><tr>';
   for (const col of BRIGADE_GROUP_COLUMNS) {
@@ -2004,6 +2018,7 @@ async function toggleBrigadeGroup(key) {
 async function loadTable(isBackgroundRefresh) {
   const hint = document.getElementById("tableHint");
   const historyScreenshotBtn = document.getElementById("historyScreenshotBtn");
+  document.getElementById("brigadeHideNoSwapLabel").style.display = "none";
   if (state.tab === "history") {
     hint.textContent = "Kliknij nagłówek kolumny, żeby sortować · kliknij wiersz, żeby zobaczyć przebieg kursu";
     document.getElementById("statusFilter").style.display = "";
@@ -2032,6 +2047,7 @@ async function loadTable(isBackgroundRefresh) {
     document.getElementById("routeFilter").style.display = "none";
     document.getElementById("vehicleFilter").style.display = "none";
     document.getElementById("dateFilter").style.display = "";
+    document.getElementById("brigadeHideNoSwapLabel").style.display = "flex";
     document.getElementById("paginationRow").style.display = "none";
     historyScreenshotBtn.style.display = "none";
     await loadBrigadesTable(isBackgroundRefresh);
@@ -2060,6 +2076,11 @@ async function refreshAll(isBackgroundRefresh) {
   await Promise.all([loadSummary(), loadRoutes(), loadServiceAlerts()]);
   await loadTable(isBackgroundRefresh);
 }
+
+document.getElementById("brigadeHideNoSwapCheckbox").addEventListener("change", (e) => {
+  state.brigadeHideNoSwap = e.target.checked;
+  renderBrigadesTable(); // tylko re-render z juz posiadanych danych, bez ponownego zapytania do API
+});
 
 document.getElementById("connectBtn").addEventListener("click", () => {
   const val = document.getElementById("apiBaseInput").value.trim();
