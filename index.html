@@ -185,6 +185,7 @@
   .brigade-list-wrap .segment-table { font-size: 11.5px; }
   tr.brigade-trip-row.active td { background: rgba(77,163,255,0.12); }
   td.vehicle-swap { color: var(--warn); font-weight: 600; }
+  tr.brigade-group-row.has-swap td:last-child { color: var(--warn); font-weight: 600; }
   tr.pass-separator td {
     background: var(--pass-separator-bg); color: var(--warn); font-weight: 600; font-size: 11.5px;
     padding: 6px 8px; border-bottom: 1px solid var(--panel-border); white-space: normal;
@@ -218,6 +219,7 @@
        (paginacja/sortowanie) per tryb x zakladka. -->
   <button class="tab-btn" data-tab="history">Historia</button>
   <button class="tab-btn" data-tab="unstaffed">Kursy bez danych GPS</button>
+  <button class="tab-btn" data-tab="brigades">Obsady brygad</button>
   <button class="tab-btn" data-tab="alerts">Archiwum komunikatów</button>
 </div>
 
@@ -327,6 +329,28 @@ const UNSTAFFED_ROUTE_COLUMNS = [
   { key: "unstaffed_count", label: "Bez danych GPS", cls: "col-medium", sortKey: "unstaffed_count" },
 ];
 
+// Zakladka "Obsady brygad" - z /api/brigade_rotation_report. Ten sam
+// dwupoziomowy wzorzec co w "Kursy bez danych GPS" (BRIGADE_DAY_COLUMNS dla
+// widoku wielu dni naraz, BRIGADE_GROUP_COLUMNS dla listy brygad w obrebie
+// JEDNEGO dnia) - ale rozwiniecie pojedynczej brygady dociaga PELNY
+// przebieg jej kursow z /api/trip_history (ten sam endpoint i ten sam
+// wyglad tabeli co istniejacy widok "Przebieg kursu" w Historii), zeby nie
+// duplikowac danych/logiki wykrywania zmiany pojazdu (vehicle_changed_from_previous).
+const BRIGADE_DAY_COLUMNS = [
+  { key: "service_date_fmt", label: "Data", cls: "col-narrow", sortKey: "service_date" },
+  { key: "brigade_day_count", label: "Brygady", cls: "col-medium", sortKey: "brigade_day_count" },
+  { key: "swap_day_total", label: "Zmiany pojazdu (łącznie)", cls: "col-medium", sortKey: "swap_day_total" },
+];
+
+const BRIGADE_GROUP_COLUMNS = [
+  { key: "mode_label", label: "Tryb", cls: "col-narrow", sortKey: "mode_label" },
+  { key: "route_label", label: "Linia", cls: "col-narrow", sortKey: "route_label" },
+  { key: "brigade_label", label: "Brygada", cls: "col-narrow", sortKey: "brigade_label" },
+  { key: "trip_count", label: "Kursy", cls: "col-medium", sortKey: "trip_count" },
+  { key: "vehicle_count", label: "Pojazdy", cls: "col-medium", sortKey: "vehicle_count" },
+  { key: "swap_count", label: "Zmiany pojazdu", cls: "col-medium", sortKey: "swap_count" },
+];
+
 let state = {
   apiBase: "",
   tab: "live",
@@ -353,6 +377,12 @@ let state = {
   alertsSort: null, // "first_seen_at" | "last_seen_at" | null = domyslna kolejnosc z API (last_seen_at desc)
   alertsOrder: "desc",
   unstaffedExpandedDays: null, // Set() dni rozwinietych w widoku "wszystkie dni" - null = jeszcze nie zainicjalizowany (patrz loadUnstaffedTable)
+  brigadeReportRows: [], // zagregowane wiersze raportu (zakladka "Obsady brygad")
+  brigadeExpandedDays: null, // jak unstaffedExpandedDays, ale dla zakladki "Obsady brygad"
+  brigadeExpandedKey: null, // klucz aktualnie rozwinietej brygady (dzien|tryb|block_id), lub null
+  brigadeExpandedRows: null, // pelny przebieg kursow rozwinietej brygady (z /api/trip_history), null = w trakcie ladowania
+  brigadeSort: null,
+  brigadeOrder: "desc",
   expandedKey: null,      // trip_id+start_date aktualnie rozwinietego wiersza
   expandedSignals: null,  // zaladowane sygnaly dla rozwinietego wiersza
   expandedTickKey: null,  // ktory segment (stop_sequence) ma rozwiniete surowe ticki
@@ -1694,6 +1724,283 @@ async function toggleUnstaffedGroup(key) {
   }
 }
 
+// --- Zakladka "Obsady brygad" (14.10.2026) ---
+
+async function loadBrigadesTable(isBackgroundRefresh) {
+  const container = document.getElementById("tableContainer");
+  if (!isBackgroundRefresh) {
+    container.innerHTML = '<div class="loading">Ładowanie...</div>';
+  }
+  try {
+    const params = new URLSearchParams();
+    if (state.mode && state.mode !== "__offline__") params.set("mode", state.mode);
+    if (state.selectedDate) {
+      params.set("start_date", toGtfsDate(state.selectedDate));
+      params.set("end_date", toGtfsDate(state.selectedDate));
+    }
+    const data = await apiGet(`/api/brigade_rotation_report?${params.toString()}`);
+    const rows = (data.rows ?? []).map((r) => ({
+      ...r,
+      service_date_fmt: fmtServiceDate(r.service_date),
+      mode_label: MODE_LABELS_ALERT[r.mode] ?? r.mode,
+      route_label: (r.route_short_names && r.route_short_names.length) ? r.route_short_names.join("/") : "—",
+    }));
+    state.brigadeReportRows = rows;
+    // Jak w loadUnstaffedTable: domyslnie rozwijamy tylko najnowszy dzien,
+    // ale TYLKO przy pierwszym zaladowaniu - tlo-odswiezanie nie powinno po
+    // cichu zwijac dnia, ktory uzytkownik juz sam sobie rozwinal.
+    if (state.brigadeExpandedDays === null) {
+      state.brigadeExpandedDays = new Set();
+      if (rows.length) {
+        const newestDate = rows.reduce((max, r) => (r.service_date > max ? r.service_date : max), rows[0].service_date);
+        state.brigadeExpandedDays.add(newestDate);
+      }
+    }
+    renderBrigadesTable();
+    document.getElementById("paginationRow").style.display = "none";
+  } catch (e) {
+    container.innerHTML = `<div class="error-state">Nie udało się pobrać danych: ${e.message}</div>`;
+  }
+}
+
+function brigadeGroupKey(row) {
+  return `${row.service_date}|${row.mode}|${row.block_id}`;
+}
+
+function brigadeSortValue(row, sortKey) {
+  if (sortKey === "brigade_label") return brigadeSortKey(row.brigade_label ?? row.block_id);
+  return row[sortKey];
+}
+
+function sortBrigadeRows(rows, sortKey, order) {
+  return [...rows].sort((a, b) => {
+    const av = brigadeSortValue(a, sortKey);
+    const bv = brigadeSortValue(b, sortKey);
+    if (av === null || av === undefined) return 1;
+    if (bv === null || bv === undefined) return -1;
+    if (av < bv) return order === "asc" ? -1 : 1;
+    if (av > bv) return order === "asc" ? 1 : -1;
+    return 0;
+  });
+}
+
+function computeBrigadeDayGroups(rows) {
+  const byDay = new Map();
+  for (const r of rows) {
+    if (!byDay.has(r.service_date)) {
+      byDay.set(r.service_date, {
+        service_date: r.service_date, service_date_fmt: r.service_date_fmt,
+        brigade_day_count: 0, swap_day_total: 0,
+      });
+    }
+    const d = byDay.get(r.service_date);
+    d.brigade_day_count += 1;
+    d.swap_day_total += r.swap_count ?? 0;
+  }
+  return [...byDay.values()];
+}
+
+function brigadeSortArrow(sortKey, currentSort, currentOrder) {
+  if (sortKey !== currentSort) return "";
+  return currentOrder === "asc" ? " ▲" : " ▼";
+}
+
+// Renderuje liste brygad (tryb+linia+brygada+liczniki) dla JEDNEGO,
+// juz ustalonego dnia - analogicznie do renderUnstaffedRouteTableHtml.
+function renderBrigadeGroupTableHtml(groupRows) {
+  const sortKey = state.brigadeSort && BRIGADE_GROUP_COLUMNS.some((c) => c.sortKey === state.brigadeSort)
+    ? state.brigadeSort
+    : null;
+  const sorted = sortKey
+    ? sortBrigadeRows(groupRows, sortKey, state.brigadeOrder)
+    : [...groupRows].sort((a, b) => brigadeSortValue(a, "brigade_label") - brigadeSortValue(b, "brigade_label"));
+
+  let html = '<table><thead><tr>';
+  for (const col of BRIGADE_GROUP_COLUMNS) {
+    html += `<th class="${col.cls ?? ''}" data-sort-scope="brigade-group" data-sort-key="${col.sortKey}">${col.label}${brigadeSortArrow(col.sortKey, sortKey, state.brigadeOrder)}</th>`;
+  }
+  html += "</tr></thead><tbody>";
+  for (const row of sorted) {
+    const key = brigadeGroupKey(row);
+    const isExpanded = state.brigadeExpandedKey === key;
+    html += `<tr class="data-row brigade-group-row${isExpanded ? ' expanded' : ''}${row.swap_count > 0 ? ' has-swap' : ''}" data-key="${key}">`;
+    for (const col of BRIGADE_GROUP_COLUMNS) {
+      html += `<td class="${col.cls ?? ''}">${row[col.key] ?? "—"}</td>`;
+    }
+    html += "</tr>";
+    if (isExpanded) {
+      html += `<tr class="unstaffed-detail-row"><td colspan="${BRIGADE_GROUP_COLUMNS.length}">${renderBrigadeDetailHtml(row)}</td></tr>`;
+    }
+  }
+  html += "</tbody></table>";
+  return html;
+}
+
+// Opakowuje liste brygad danego dnia w naglowek z "Zrzut dnia" - ten sam
+// wzorzec co renderUnstaffedDaySummaryHtml.
+function renderBrigadeDaySummaryHtml(groupRows, dayLabel, dayKey) {
+  const totalSwaps = groupRows.reduce((sum, r) => sum + (r.swap_count ?? 0), 0);
+  return `<div class="detail-wrap">
+    <div class="detail-header">
+      <div class="title">Obsady brygad - podsumowanie dnia: ${dayLabel} (${groupRows.length} brygad, ${totalSwaps} zmian pojazdu)</div>
+      <button type="button" class="screenshot-btn" data-screenshot-name="obsady_brygad_dzien_${dayKey}">📷 Zrzut dnia</button>
+    </div>
+    ${renderBrigadeGroupTableHtml(groupRows)}
+  </div>`;
+}
+
+function renderBrigadesTable() {
+  const container = document.getElementById("tableContainer");
+
+  if (state.selectedDate) {
+    const dayLabel = state.brigadeReportRows[0]?.service_date_fmt ?? state.brigadeReportRows[0]?.service_date ?? state.selectedDate;
+    container.innerHTML = renderBrigadeDaySummaryHtml(state.brigadeReportRows, dayLabel, state.selectedDate);
+    attachBrigadeHandlers(container);
+    return;
+  }
+
+  const dayGroups = computeBrigadeDayGroups(state.brigadeReportRows);
+  const daySortKey = state.brigadeSort === "service_date" || state.brigadeSort === "brigade_day_count" || state.brigadeSort === "swap_day_total"
+    ? state.brigadeSort
+    : null;
+  const sortedDays = daySortKey
+    ? sortBrigadeRows(dayGroups, daySortKey, state.brigadeOrder)
+    : [...dayGroups].sort((a, b) => (a.service_date < b.service_date ? 1 : -1));
+
+  let html = "<table><thead><tr>";
+  for (const col of BRIGADE_DAY_COLUMNS) {
+    html += `<th class="${col.cls ?? ''}" data-sort-scope="brigade-day" data-sort-key="${col.sortKey}">${col.label}${brigadeSortArrow(col.sortKey, daySortKey, state.brigadeOrder)}</th>`;
+  }
+  html += "</tr></thead><tbody>";
+  for (const day of sortedDays) {
+    const isExpanded = state.brigadeExpandedDays.has(day.service_date);
+    html += `<tr class="data-row brigade-day-row${isExpanded ? ' expanded' : ''}" data-day="${day.service_date}">`;
+    html += `<td class="col-narrow">${isExpanded ? "▾" : "▸"} ${day.service_date_fmt}</td>`;
+    html += `<td class="col-medium">${day.brigade_day_count}</td>`;
+    html += `<td class="col-medium">${day.swap_day_total}</td>`;
+    html += "</tr>";
+    if (isExpanded) {
+      const groupRows = state.brigadeReportRows.filter((r) => r.service_date === day.service_date);
+      html += `<tr class="unstaffed-detail-row"><td colspan="${BRIGADE_DAY_COLUMNS.length}">${renderBrigadeDaySummaryHtml(groupRows, day.service_date_fmt ?? day.service_date, day.service_date)}</td></tr>`;
+    }
+  }
+  html += "</tbody></table>";
+  container.innerHTML = html;
+  attachBrigadeHandlers(container);
+}
+
+function attachBrigadeHandlers(container) {
+  container.querySelectorAll(".screenshot-btn").forEach((btn) => {
+    btn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      captureDetailScreenshot(btn);
+    });
+  });
+  container.querySelectorAll("tr.brigade-day-row").forEach((tr) => {
+    tr.addEventListener("click", () => {
+      const day = tr.dataset.day;
+      if (state.brigadeExpandedDays.has(day)) {
+        state.brigadeExpandedDays.delete(day);
+      } else {
+        state.brigadeExpandedDays.add(day);
+      }
+      renderBrigadesTable();
+    });
+  });
+  container.querySelectorAll("tr.brigade-group-row").forEach((tr) => {
+    tr.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      toggleBrigadeGroup(tr.dataset.key);
+    });
+  });
+  container.querySelectorAll("th[data-sort-key]").forEach((th) => {
+    th.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const key = th.dataset.sortKey;
+      if (state.brigadeSort === key) {
+        state.brigadeOrder = state.brigadeOrder === "asc" ? "desc" : "asc";
+      } else {
+        state.brigadeSort = key;
+        state.brigadeOrder = "asc";
+      }
+      renderBrigadesTable();
+    });
+  });
+}
+
+// Pelny przebieg kursow JEDNEJ brygady w JEDNYM dniu - ten sam uklad kolumn
+// i to samo oznaczenie zmiany pojazdu (vehicleCell/.vehicle-swap/"⇄") co
+// istniejacy widok "Przebieg kursu" (renderBrigadeListHtml), ale
+// samodzielny (nie zalezy od state.activeDetailRow/brigadeDayTrips, ktore
+// sa powiazane z tamtym, osobnym przeplywem w zakladce Historia).
+function renderBrigadeDetailHtml(row) {
+  if (state.brigadeExpandedRows === null) {
+    return '<div class="loading">Ładowanie kursów...</div>';
+  }
+  if (!state.brigadeExpandedRows.length) {
+    return '<div class="hint">Brak kursów tej brygady w historii dla tego dnia.</div>';
+  }
+  const nameHint = `obsada_brygady_${row.brigade_label ?? row.block_id}_${row.service_date}`;
+  let html = `<div class="detail-wrap">
+    <div class="detail-header">
+      <div class="title">Obsada brygady ${row.brigade_label ?? row.block_id} · ${row.mode_label} ${row.route_label} · ${row.service_date_fmt ?? row.service_date}</div>
+      <button type="button" class="screenshot-btn" data-screenshot-name="${nameHint}">📷 Zrzut</button>
+    </div>
+    <div class="brigade-list-wrap"><table class="segment-table"><thead><tr>
+    <th>Kurs</th><th>Pojazd</th><th>Rozkład: start</th><th>Rozkład: koniec</th><th>Relacja</th><th>Status</th><th>Śr. opóźnienie</th><th>Zamknięty o</th>
+  </tr></thead><tbody>`;
+  for (const t of state.brigadeExpandedRows) {
+    html += `<tr>
+      <td title="${t.trip_id ?? ""}">${extractNumber(t.trip_id, "trip", t.mode)}</td>
+      ${vehicleCell(t, "")}
+      <td>${t.scheduled_start ?? "—"}</td>
+      <td>${t.scheduled_end ?? "—"}</td>
+      <td class="relation-text">${t.relation ?? "—"}</td>
+      <td><span class="status-pill status-${t.status}">${STATUS_LABELS[t.status] || t.status}</span></td>
+      <td style="${delayStyle(t.avg_delay_seconds)}">${fmtDelayShort(t.avg_delay_seconds)}</td>
+      <td>${fmtTime(t.last_seen_at)}</td>
+    </tr>`;
+  }
+  html += "</tbody></table></div></div>";
+  return html;
+}
+
+async function toggleBrigadeGroup(key) {
+  if (state.brigadeExpandedKey === key) {
+    state.brigadeExpandedKey = null;
+    state.brigadeExpandedRows = null;
+    renderBrigadesTable();
+    return;
+  }
+  const row = state.brigadeReportRows.find((r) => brigadeGroupKey(r) === key);
+  if (!row) return;
+
+  state.brigadeExpandedKey = key;
+  state.brigadeExpandedRows = null;
+  renderBrigadesTable();
+
+  try {
+    const params = new URLSearchParams({
+      mode: row.mode,
+      block_id: row.block_id,
+      start_date: row.service_date,
+      sort: "first_seen_at",
+      order: "asc",
+      limit: 200,
+    });
+    const data = await apiGet(`/api/trip_history?${params.toString()}`);
+    if (state.brigadeExpandedKey === key) {
+      state.brigadeExpandedRows = data.rows ?? [];
+      renderBrigadesTable();
+    }
+  } catch (e) {
+    if (state.brigadeExpandedKey === key) {
+      state.brigadeExpandedRows = [];
+      renderBrigadesTable();
+    }
+  }
+}
+
 async function loadTable(isBackgroundRefresh) {
   const hint = document.getElementById("tableHint");
   const historyScreenshotBtn = document.getElementById("historyScreenshotBtn");
@@ -1719,6 +2026,15 @@ async function loadTable(isBackgroundRefresh) {
     document.getElementById("paginationRow").style.display = "none";
     historyScreenshotBtn.style.display = "none";
     await loadUnstaffedTable(isBackgroundRefresh);
+  } else if (state.tab === "brigades") {
+    hint.textContent = "Obsady brygad wg dnia - rozwiń dzień, potem brygadę, żeby zobaczyć pełny przebieg kursów i rotację pojazdów.";
+    document.getElementById("statusFilter").style.display = "none";
+    document.getElementById("routeFilter").style.display = "none";
+    document.getElementById("vehicleFilter").style.display = "none";
+    document.getElementById("dateFilter").style.display = "";
+    document.getElementById("paginationRow").style.display = "none";
+    historyScreenshotBtn.style.display = "none";
+    await loadBrigadesTable(isBackgroundRefresh);
   } else if (state.tab === "alerts") {
     hint.textContent = "Pełna historia komunikatów operatora (aktywne i już zakończone), najnowsze/ostatnio widziane pierwsze.";
     document.getElementById("statusFilter").style.display = "none";
@@ -1762,7 +2078,7 @@ document.querySelectorAll(".tab-btn").forEach((btn) => {
     // niewykonanych kursow (to pojecie dotyczy tylko biezacego stanu na
     // zywo) - resetujemy, zeby dropdown nie zostawal wybrany na czyms co
     // po cichu nic nie robi.
-    if ((state.tab === "history" || state.tab === "unstaffed" || state.tab === "alerts") && state.mode === "__offline__") {
+    if ((state.tab === "history" || state.tab === "unstaffed" || state.tab === "brigades" || state.tab === "alerts") && state.mode === "__offline__") {
       state.mode = "";
       document.getElementById("modeFilter").value = "";
     }
