@@ -1521,13 +1521,32 @@ function renderUnstaffedRouteTableHtml(routeRows) {
   return html;
 }
 
+// Opakowuje tabele tryb+linia+liczba dla JEDNEGO dnia w naglowek z
+// przyciskiem "Zrzut" (podsumowanie calego dnia, nie pojedynczej linii -
+// patrz renderUnstaffedDetailHtml wyzej dla zrzutu pojedynczej linii).
+// Reuzywa .detail-wrap/.screenshot-btn - captureDetailScreenshot juz obsluguje
+// dowolny .screenshot-btn przez btn.closest(".detail-wrap"), wiec nie trzeba
+// osobnej funkcji przechwytywania.
+function renderUnstaffedDaySummaryHtml(routeRows, dayLabel, dayKey) {
+  const nameHint = `bez_danych_gps_dzien_${dayKey}`;
+  const total = routeRows.reduce((sum, r) => sum + (r.unstaffed_count ?? 0), 0);
+  return `<div class="detail-wrap">
+    <div class="detail-header">
+      <div class="title">Bez danych GPS - podsumowanie dnia: ${dayLabel} (łącznie ${total})</div>
+      <button type="button" class="screenshot-btn" data-screenshot-name="${nameHint}">📷 Zrzut dnia</button>
+    </div>
+    ${renderUnstaffedRouteTableHtml(routeRows)}
+  </div>`;
+}
+
 function renderUnstaffedTable() {
   const container = document.getElementById("tableContainer");
 
   if (state.selectedDate) {
     // Filtr daty juz wybrany - jeden dzien, wiec bez poziomu grupowania po
     // dniach, od razu plaska lista tryb+linia+liczba dla tego dnia.
-    container.innerHTML = renderUnstaffedRouteTableHtml(state.unstaffedReportRows);
+    const dayLabel = state.unstaffedReportRows[0]?.service_date_fmt ?? state.unstaffedReportRows[0]?.service_date ?? state.selectedDate;
+    container.innerHTML = renderUnstaffedDaySummaryHtml(state.unstaffedReportRows, dayLabel, state.selectedDate);
     attachUnstaffedHandlers(container);
     return;
   }
@@ -1555,7 +1574,7 @@ function renderUnstaffedTable() {
     html += "</tr>";
     if (isExpanded) {
       const routeRows = state.unstaffedReportRows.filter((r) => r.service_date === day.service_date);
-      html += `<tr class="unstaffed-detail-row"><td colspan="${UNSTAFFED_DAY_COLUMNS.length}">${renderUnstaffedRouteTableHtml(routeRows)}</td></tr>`;
+      html += `<tr class="unstaffed-detail-row"><td colspan="${UNSTAFFED_DAY_COLUMNS.length}">${renderUnstaffedDaySummaryHtml(routeRows, day.service_date_fmt ?? day.service_date, day.service_date)}</td></tr>`;
     }
   }
   html += "</tbody></table>";
