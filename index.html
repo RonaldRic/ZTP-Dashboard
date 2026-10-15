@@ -186,6 +186,7 @@
   tr.brigade-trip-row.active td { background: rgba(77,163,255,0.12); }
   td.vehicle-swap { color: var(--warn); font-weight: 600; }
   tr.brigade-group-row.has-swap td:last-child { color: var(--warn); font-weight: 600; }
+  .vehicle-list { color: var(--text-dim); font-weight: normal; font-size: 12px; }
   tr.pass-separator td {
     background: var(--pass-separator-bg); color: var(--warn); font-weight: 600; font-size: 11.5px;
     padding: 6px 8px; border-bottom: 1px solid var(--panel-border); white-space: normal;
@@ -1839,6 +1840,14 @@ function renderBrigadeGroupTableHtml(groupRows) {
     const isExpanded = state.brigadeExpandedKey === key;
     html += `<tr class="data-row brigade-group-row${isExpanded ? ' expanded' : ''}${row.swap_count > 0 ? ' has-swap' : ''}" data-key="${key}">`;
     for (const col of BRIGADE_GROUP_COLUMNS) {
+      if (col.key === "vehicle_count") {
+        const labels = row.vehicle_labels ?? [];
+        const labelsHtml = labels.length
+          ? ` <span class="vehicle-list">(${labels.map(escapeHtml).join(", ")})</span>`
+          : "";
+        html += `<td class="${col.cls ?? ''}">${row.vehicle_count ?? "—"}${labelsHtml}</td>`;
+        continue;
+      }
       html += `<td class="${col.cls ?? ''}">${row[col.key] ?? "—"}</td>`;
     }
     html += "</tr>";
